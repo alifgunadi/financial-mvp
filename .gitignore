@@ -1,0 +1,28 @@
+# deps
+node_modules/
+
+# builds
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# env (never commit real secrets)
+.env
+.env.local
+!.env.example
+
+# prisma
+*.db
+*.db-journal
+
+# uploads (local receipt store, MVP)
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/

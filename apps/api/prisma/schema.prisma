@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Schema DDL only (approved domain model). No routes or business logic yet.
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+  BOTH
+}
+
+enum TransactionSource {
+  MANUAL
+  RECEIPT
+}
+
+enum ReceiptStatus {
+  UPLOADED
+  PROCESSING
+  NEEDS_REVIEW
+  CONFIRMED
+  FAILED
+}
+
+enum UserRole {
+  CLIENT
+  SUPERADMIN
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         UserRole  @default(CLIENT)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     Session[]
+  categories   Category[]
+  transactions Transaction[]
+  receipts     Receipt[]
+}
+
+model Session {
+  // SHA-256 hex of the raw token. Raw token lives only in the cookie.
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Category {
+  id           String        @id @default(uuid())
+  name         String        @unique
+  type         CategoryType
+  createdAt    DateTime      @default(now())
+  // Nullable bridge (Opsi A): claimed by owner, locked NOT NULL in final migration.
+  userId       String?
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  suggestions  Receipt[]
+}
+
+model Transaction {
+  id         String           @id @default(uuid())
+  type       TransactionType
+  // Whole IDR units (50000 = Rp50.000). Single currency. Never float.
+  amount     BigInt
+  currency   String           @default("IDR")
+  date       DateTime         @db.Date
+  note       String?
+  merchant   String?
+  categoryId String
+  category   Category         @relation(fields: [categoryId], references: [id])
+  userId     String?
+  user       User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receiptId  String?          @unique
+  receipt    Receipt?         @relation("ReceiptTransaction", fields: [receiptId], references: [id])
+  source     TransactionSource
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+}
+
+model Receipt {
+  id                String           @id @default(uuid())
+  // Relative reference resolved by the receipt store (local dir for MVP).
+  filePath          String
+  // Original client filename, metadata only. Never used as a path.
+  originalName      String
+  mimeType          String
+  size              Int
+  userId            String?
+  user              User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status            ReceiptStatus    @default(UPLOADED)
+  extractedMerchant String?
+  extractedAmount   BigInt?
+  extractedDate     DateTime?        @db.Date
+  extractedType     TransactionType? @default(EXPENSE)
+  // Raw category candidate string. Never auto-creates a Category.
+  extractedCategory String?
+  // When the last extraction ran (null = never extracted).
+  extractedAt       DateTime?
+  suggestedCategoryId String?
+  suggestedCategory Category?        @relation(fields: [suggestedCategoryId], references: [id])
+  rawAiJson         Json?
+  error             String?
+  transaction       Transaction?     @relation("ReceiptTransaction")
+  createdAt         DateTime         @default(now())
+}
