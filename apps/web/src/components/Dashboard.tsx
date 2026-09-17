@@ -3,6 +3,13 @@ import {
   useDashboardSummary,
   type SummaryPeriod,
 } from "../api/hooks";
+import CategoryDonut from "./CategoryDonut.tsx";
+import CategoryManager from "./CategoryManager.tsx";
+import DashboardCard from "./DashboardCard.tsx";
+import ReceiptUpload from "./ReceiptUpload.tsx";
+import SpendingPaceCard from "./SpendingPaceCard.tsx";
+import TransactionForm from "./TransactionForm.tsx";
+import TransactionList from "./TransactionList.tsx";
 import TransactionRow, { fmtIDR } from "./TransactionRow.tsx";
 
 function currentMonth(): SummaryPeriod {
@@ -13,165 +20,283 @@ function currentMonth(): SummaryPeriod {
   return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
 }
 
-function Card({
+const dateInputCls =
+  "rounded-xl border border-line bg-surface px-2.5 py-2 text-[13px] text-ink focus:border-ink focus:outline-none";
+
+function SummaryCard({
   label,
+  caption,
   value,
-  accent,
+  tone = "text-ink",
 }: {
   label: string;
+  caption: string;
   value: number;
-  accent: string;
+  tone?: string;
 }) {
   return (
-    <div className="rounded border border-gray-200 bg-white p-4">
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className={`mt-1 text-xl font-semibold ${accent}`}>
+    <div className="h-full min-w-0 rounded-2xl border border-line bg-surface p-6 shadow-sm">
+      <p className="text-sm font-semibold tracking-tight">{label}</p>
+      <p
+        className={`mt-1.5 truncate text-[26px] font-bold tracking-tight tabular-nums ${tone}`}
+      >
         Rp{fmtIDR.format(value)}
       </p>
+      <p className="mt-1 text-xs text-subtle">{caption}</p>
     </div>
   );
 }
 
+function FlowBar({
+  label,
+  value,
+  max,
+  bar,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  bar: string;
+}) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="font-bold tabular-nums">Rp{fmtIDR.format(value)}</span>
+      </div>
+      <div
+        role="img"
+        aria-label={`${label} Rp${fmtIDR.format(value)}`}
+        className="mt-2 h-2.5 overflow-hidden rounded-full bg-canvas"
+      >
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+type RecentTab = "" | "income" | "expense";
+
 export default function Dashboard() {
   const [period, setPeriod] = useState<SummaryPeriod>(currentMonth);
+  const [tab, setTab] = useState<RecentTab>("");
   const { data, isPending, isError, error, refetch } =
     useDashboardSummary(period);
-  const maxTotal = Math.max(0, ...(data?.expenseByCategory.map((c) => c.total) ?? []));
+  const flowMax = Math.max(data?.totalIncome ?? 0, data?.totalExpense ?? 0, 0);
+  const recent = (data?.recent ?? []).filter((t) => !tab || t.type === tab);
 
   return (
-    <section className="rounded border border-gray-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">Dashboard</h2>
-        <div className="flex gap-2 text-sm">
+    <section id="dashboard" aria-label="Dashboard" className="scroll-mt-6">
+      {/* Row 1: control header */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
+          <p className="mt-1 text-[13px] text-subtle">
+            {period.from && period.to
+              ? `Period ${period.from} → ${period.to}`
+              : "Select a period to summarize."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="date"
             aria-label="From"
-            className="rounded border border-gray-300 px-2 py-1.5"
+            className={dateInputCls}
             value={period.from}
             onChange={(e) => setPeriod((p) => ({ ...p, from: e.target.value }))}
           />
           <input
             type="date"
             aria-label="To"
-            className="rounded border border-gray-300 px-2 py-1.5"
+            className={dateInputCls}
             value={period.to}
             onChange={(e) => setPeriod((p) => ({ ...p, to: e.target.value }))}
           />
+          <button
+            type="button"
+            onClick={() => setPeriod(currentMonth())}
+            className="rounded-xl border border-line bg-surface px-3 py-2 text-[13px] font-medium text-subtle transition-colors hover:text-ink"
+          >
+            This month
+          </button>
+          <a
+            href="#new-transaction"
+            className="rounded-xl bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90"
+          >
+            + New transaction
+          </a>
         </div>
       </div>
 
-      {isPending && <p className="mt-3 text-sm text-gray-500">Loading…</p>}
+      {isPending && (
+        <DashboardCard title="Dashboard" subtitle="Loading summary">
+          <p className="text-sm text-subtle">Loading…</p>
+        </DashboardCard>
+      )}
       {isError && (
-        <p className="mt-3 text-sm text-red-600">
-          {(error as Error).message}{" "}
-          <button className="underline" onClick={() => refetch()}>
-            Retry
-          </button>
-        </p>
+        <DashboardCard title="Dashboard" subtitle="Summary unavailable">
+          <p className="text-sm text-clay-ink">
+            {(error as Error).message}{" "}
+            <button className="underline" onClick={() => refetch()}>
+              Retry
+            </button>
+          </p>
+        </DashboardCard>
       )}
 
       {data && (
-        <>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Card label="Income" value={data.totalIncome} accent="text-green-700" />
-            <Card label="Expense" value={data.totalExpense} accent="text-red-700" />
-            <Card
-              label="Net (income − expense)"
-              value={data.balance}
-              accent={data.balance < 0 ? "text-red-700" : "text-gray-900"}
-            />
-          </div>
-
-          {data.spendingPace ? (
-            <div className="mt-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Card
-                  label="Max / day"
-                  value={data.spendingPace.recommendedMaxPerDay}
-                  accent={
-                    data.spendingPace.status === "over_budget"
-                      ? "text-red-700"
-                      : "text-gray-900"
-                  }
-                />
-                <Card
-                  label="Spent today"
-                  value={data.spendingPace.spentToday}
-                  accent="text-gray-900"
-                />
-                <Card
-                  label="Left today"
-                  value={data.spendingPace.remainingToday}
-                  accent={
-                    data.spendingPace.remainingToday < 0
-                      ? "text-red-700"
-                      : "text-gray-900"
-                  }
-                />
-              </div>
-              <p className="mt-2 text-xs text-gray-500">
-                {data.spendingPace.status === "over_budget"
-                  ? "Over budget for this period."
-                  : data.spendingPace.status === "no_data"
-                    ? "No transactions in this period yet."
-                    : `On track · ${data.spendingPace.remainingDays} day(s) left · as of ${data.spendingPace.asOf}.`}
-              </p>
+        <div className="space-y-6">
+          {/* Row 2: KPI summary */}
+          <div className="grid grid-cols-12 items-stretch gap-6 [&>*]:min-w-0">
+            <div className="col-span-12 md:col-span-4">
+              <SummaryCard
+                label="Net cashflow"
+                caption="Income minus expenses, selected period"
+                value={data.balance}
+                tone={data.balance < 0 ? "text-clay-ink" : "text-ink"}
+              />
             </div>
-          ) : (
-            <p className="mt-3 text-sm text-gray-500">
-              {data.to === null
-                ? "Select a period end date to see the daily spending guide."
-                : "This period has ended, so no daily guide is shown."}
-            </p>
-          )}
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div>
-              <h3 className="text-sm font-semibold">Expense by category</h3>
-              {data.expenseByCategory.length === 0 ? (
-                <p className="mt-2 text-sm text-gray-500">
-                  No expenses in this period.
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-2">
-                  {data.expenseByCategory.map((c) => (
-                    <li key={c.categoryId}>
-                      <div className="flex justify-between text-sm">
-                        <span>{c.name}</span>
-                        <span className="font-medium">
-                          Rp{fmtIDR.format(c.total)}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-2 rounded bg-gray-100">
-                        <div
-                          className="h-2 rounded bg-red-500"
-                          style={{
-                            width: `${maxTotal ? (c.total / maxTotal) * 100 : 0}%`,
-                          }}
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div className="col-span-12 md:col-span-4">
+              <SummaryCard
+                label="Income"
+                caption="Selected period total"
+                value={data.totalIncome}
+                tone="text-leaf-ink"
+              />
             </div>
-            <div>
-              <h3 className="text-sm font-semibold">Recent transactions</h3>
-              {data.recent.length === 0 ? (
-                <p className="mt-2 text-sm text-gray-500">
-                  No transactions in this period.
-                </p>
-              ) : (
-                <ul className="divide-y divide-gray-100">
-                  {data.recent.map((t) => (
-                    <TransactionRow key={t.id} t={t} />
-                  ))}
-                </ul>
-              )}
+            <div className="col-span-12 md:col-span-4">
+              <SummaryCard
+                label="Expenses"
+                caption="Selected period total"
+                value={data.totalExpense}
+                tone="text-clay-ink"
+              />
             </div>
           </div>
-        </>
+
+          {/* Row 3: hero analytics + recent activity */}
+          <div className="grid grid-cols-12 items-stretch gap-6 [&>*]:min-w-0">
+            <div className="col-span-12 lg:col-span-7">
+              {data.spendingPace ? (
+                <SpendingPaceCard pace={data.spendingPace} />
+              ) : (
+                <DashboardCard
+                  title="Daily spending pace"
+                  subtitle="Daily guide unavailable"
+                >
+                  <p className="text-sm text-subtle">
+                    {data.to === null
+                      ? "Select a period end date to see the daily spending guide."
+                      : "This period has ended, so no daily guide is shown."}
+                  </p>
+                </DashboardCard>
+              )}
+            </div>
+            <div className="col-span-12 lg:col-span-5">
+              <DashboardCard
+                title="Recent transactions"
+                subtitle="Latest in this period"
+              >
+                <div
+                  role="tablist"
+                  aria-label="Filter recent transactions"
+                  className="flex gap-1 rounded-xl bg-canvas p-1"
+                >
+                  {(
+                    [
+                      ["", "All"],
+                      ["income", "Income"],
+                      ["expense", "Expense"],
+                    ] as [RecentTab, string][]
+                  ).map(([value, label]) => (
+                    <button
+                      key={label}
+                      role="tab"
+                      aria-selected={tab === value}
+                      onClick={() => setTab(value)}
+                      className={`flex-1 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                        tab === value
+                          ? "bg-surface text-ink shadow-sm"
+                          : "text-subtle hover:text-ink"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {recent.length === 0 ? (
+                  <p className="mt-4 text-sm text-subtle">
+                    {data.recent.length === 0
+                      ? "No transactions in this period."
+                      : `No ${tab} transactions among the recent ones.`}
+                  </p>
+                ) : (
+                  <ul className="mt-2 divide-y divide-line">
+                    {recent.map((t) => (
+                      <TransactionRow key={t.id} t={t} />
+                    ))}
+                  </ul>
+                )}
+              </DashboardCard>
+            </div>
+          </div>
+
+          {/* Row 4: secondary analytics */}
+          <div className="grid grid-cols-12 items-stretch gap-6 [&>*]:min-w-0">
+            <div className="col-span-12 md:col-span-6">
+              <DashboardCard
+                title="Income vs expenses"
+                subtitle="Totals for the selected period"
+              >
+                <div className="space-y-4">
+                  <FlowBar
+                    label="Income"
+                    value={data.totalIncome}
+                    max={flowMax}
+                    bar="bg-leaf"
+                  />
+                  <FlowBar
+                    label="Expenses"
+                    value={data.totalExpense}
+                    max={flowMax}
+                    bar="bg-clay"
+                  />
+                </div>
+              </DashboardCard>
+            </div>
+            <div className="col-span-12 md:col-span-6">
+              <DashboardCard
+                title="Expense by category"
+                subtitle="Spending overview"
+              >
+                <CategoryDonut
+                  items={data.expenseByCategory}
+                  totalExpense={data.totalExpense}
+                />
+              </DashboardCard>
+            </div>
+          </div>
+        </div>
       )}
+
+      {/* Row 5: operations — history log + action sidebar */}
+      <div className="mt-6 grid grid-cols-12 items-start gap-6 [&>*]:min-w-0">
+        <div id="history" className="col-span-12 scroll-mt-24 lg:col-span-8">
+          <TransactionList />
+        </div>
+        <div className="col-span-12 space-y-6 lg:col-span-4">
+          <div id="new-transaction" className="scroll-mt-24">
+            <TransactionForm />
+          </div>
+          <div id="categories" className="scroll-mt-24">
+            <CategoryManager />
+          </div>
+          <div id="receipts" className="scroll-mt-24">
+            <ReceiptUpload />
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

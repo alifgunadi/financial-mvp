@@ -4,6 +4,7 @@ import {
   useCreateCategory,
   type CategoryType,
 } from "../api/hooks";
+import DashboardCard from "./DashboardCard.tsx";
 
 const inputCls =
   "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
@@ -24,12 +25,10 @@ export default function CategoryManager() {
   };
 
   return (
-    <section className="rounded border border-gray-200 bg-white p-4">
-      <h2 className="text-base font-semibold">Categories</h2>
-
-      {isPending && <p className="mt-2 text-sm text-gray-500">Loading…</p>}
+    <DashboardCard title="Categories" subtitle="Labels for your transactions">
+      {isPending && <p className="text-sm text-subtle">Loading…</p>}
       {isError && (
-        <p className="mt-2 text-sm text-red-600">
+        <p className="text-sm text-clay-ink">
           {(error as Error).message}{" "}
           <button className="underline" onClick={() => refetch()}>
             Retry
@@ -37,16 +36,16 @@ export default function CategoryManager() {
         </p>
       )}
       {data && data.length === 0 && (
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="text-sm text-subtle">
           No categories yet. Add one below.
         </p>
       )}
       {data && data.length > 0 && (
-        <ul className="mt-2 divide-y divide-gray-100 text-sm">
+        <ul className="divide-y divide-line text-sm">
           {data.map((c) => (
             <li key={c.id} className="flex justify-between py-1.5">
               <span>{c.name}</span>
-              <span className="text-xs text-gray-500">{c.type}</span>
+              <span className="text-xs text-subtle">{c.type}</span>
             </li>
           ))}
         </ul>
@@ -78,10 +77,10 @@ export default function CategoryManager() {
         </button>
       </form>
       {create.isError && (
-        <p className="mt-2 text-sm text-red-600">
+        <p className="mt-2 text-sm text-clay-ink">
           {(create.error as Error).message}
         </p>
       )}
-    </section>
+    </DashboardCard>
   );
 }

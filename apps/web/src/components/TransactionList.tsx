@@ -4,6 +4,7 @@ import {
   useTransactions,
   type TransactionFilter,
 } from "../api/hooks";
+import DashboardCard from "./DashboardCard.tsx";
 import TransactionRow from "./TransactionRow.tsx";
 
 export default function TransactionList() {
@@ -15,14 +16,14 @@ export default function TransactionList() {
   const { data: categories } = useCategories();
 
   return (
-    <section className="rounded border border-gray-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">
-          History{data ? ` (${data.total})` : ""}
-        </h2>
-        <div className="flex gap-2">
+    <DashboardCard
+      title={`History${data ? ` (${data.total})` : ""}`}
+      subtitle="All recorded transactions"
+      actionHeader={
+        <div className="flex shrink-0 gap-2">
           <select
-            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            aria-label="Filter by type"
+            className="rounded-lg border border-line bg-surface px-2 py-1.5 text-[13px]"
             value={filter.type}
             onChange={(e) =>
               setFilter((f) => ({
@@ -36,7 +37,8 @@ export default function TransactionList() {
             <option value="income">income</option>
           </select>
           <select
-            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            aria-label="Filter by category"
+            className="max-w-36 rounded-lg border border-line bg-surface px-2 py-1.5 text-[13px]"
             value={filter.categoryId}
             onChange={(e) =>
               setFilter((f) => ({ ...f, categoryId: e.target.value }))
@@ -50,11 +52,11 @@ export default function TransactionList() {
             ))}
           </select>
         </div>
-      </div>
-
-      {isPending && <p className="mt-3 text-sm text-gray-500">Loading…</p>}
+      }
+    >
+      {isPending && <p className="text-sm text-subtle">Loading…</p>}
       {isError && (
-        <p className="mt-3 text-sm text-red-600">
+        <p className="text-sm text-clay-ink">
           {(error as Error).message}{" "}
           <button className="underline" onClick={() => refetch()}>
             Retry
@@ -62,17 +64,18 @@ export default function TransactionList() {
         </p>
       )}
       {data && data.data.length === 0 && (
-        <p className="mt-3 text-sm text-gray-500">
-          No transactions yet. Add your first one on the left.
+        <p className="text-sm text-subtle">
+          No transactions yet. Add your first one using the New transaction
+          form.
         </p>
       )}
       {data && data.data.length > 0 && (
-        <ul className="mt-2 divide-y divide-gray-100">
+        <ul className="divide-y divide-line">
           {data.data.map((t) => (
             <TransactionRow key={t.id} t={t} />
           ))}
         </ul>
       )}
-    </section>
+    </DashboardCard>
   );
 }

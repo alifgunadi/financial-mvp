@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useExtractReceipt, useUploadReceipt } from "../api/hooks";
+import DashboardCard from "./DashboardCard.tsx";
 import ReceiptReview from "./ReceiptReview.tsx";
 import { fmtIDR } from "./TransactionRow.tsx";
 
@@ -17,9 +18,8 @@ export default function ReceiptUpload() {
   };
 
   return (
-    <section className="rounded border border-gray-200 bg-white p-4">
-      <h2 className="text-base font-semibold">Upload Receipt</h2>
-      <form onSubmit={submit} className="mt-3 space-y-3">
+    <DashboardCard title="Upload Receipt" subtitle="Scan a receipt with AI">
+      <form onSubmit={submit} className="space-y-3">
         <input
           ref={inputRef}
           type="file"
@@ -98,6 +98,6 @@ export default function ReceiptUpload() {
         )}
         {extract.isSuccess && <ReceiptReview receiptId={extract.data.id} />}
       </form>
-    </section>
+    </DashboardCard>
   );
 }

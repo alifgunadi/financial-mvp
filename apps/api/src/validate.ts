@@ -69,6 +69,19 @@ export const updateReceiptSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, "at least one review field is required");
 
+// Statement import upload: explicit bank identifier only (never guessed).
+// Absent = unresolved, filled by a future detection phase. Multipart text
+// fields arrive as strings; anything else (e.g. repeated fields) is rejected.
+export const createImportSchema = z.object({
+  bank: z
+    .string()
+    .trim()
+    .min(1, "bank must not be empty")
+    .max(50, "bank is too long")
+    .regex(/^[A-Za-z0-9 _-]+$/, "bank has invalid characters")
+    .optional(),
+});
+
 export const authSchema = z.object({  email: z
     .string()
     .trim()

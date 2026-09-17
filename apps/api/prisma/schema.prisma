@@ -23,6 +23,7 @@ enum CategoryType {
 enum TransactionSource {
   MANUAL
   RECEIPT
+  IMPORT
 }
 
 enum ReceiptStatus {
@@ -33,22 +34,34 @@ enum ReceiptStatus {
   FAILED
 }
 
+// Statement import lifecycle. Names mirror ReceiptStatus where the meaning
+// matches; IMPORTED is terminal (rows written by a future phase). This
+// foundation only ever persists UPLOADED — other values are for later phases.
+enum ImportStatus {
+  UPLOADED
+  PROCESSING
+  NEEDS_REVIEW
+  IMPORTED
+  FAILED
+}
+
 enum UserRole {
   CLIENT
   SUPERADMIN
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         UserRole  @default(CLIENT)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  sessions     Session[]
-  categories   Category[]
-  transactions Transaction[]
-  receipts     Receipt[]
+  id            String        @id @default(uuid())
+  email         String        @unique
+  passwordHash  String
+  role          UserRole      @default(CLIENT)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  sessions      Session[]
+  categories    Category[]
+  transactions  Transaction[]
+  receipts      Receipt[]
+  importBatches ImportBatch[]
 }
 
 model Session {
@@ -73,48 +86,86 @@ model Category {
 }
 
 model Transaction {
-  id         String           @id @default(uuid())
-  type       TransactionType
+  id                String            @id @default(uuid())
+  type              TransactionType
   // Whole IDR units (50000 = Rp50.000). Single currency. Never float.
-  amount     BigInt
-  currency   String           @default("IDR")
-  date       DateTime         @db.Date
-  note       String?
-  merchant   String?
-  categoryId String
-  category   Category         @relation(fields: [categoryId], references: [id])
-  userId     String?
-  user       User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  receiptId  String?          @unique
-  receipt    Receipt?         @relation("ReceiptTransaction", fields: [receiptId], references: [id])
-  source     TransactionSource
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+  amount            BigInt
+  currency          String            @default("IDR")
+  date              DateTime          @db.Date
+  note              String?
+  merchant          String?
+  categoryId        String
+  category          Category          @relation(fields: [categoryId], references: [id])
+  userId            String?
+  user              User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receiptId         String?           @unique
+  receipt           Receipt?          @relation("ReceiptTransaction", fields: [receiptId], references: [id])
+  source            TransactionSource
+  // Provenance for future statement-import rows. Null for MANUAL/RECEIPT.
+  // SetNull: money records outlive import administration.
+  importBatchId     String?
+  importBatch       ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  // Future transaction-level dedup fingerprint. Format intentionally
+  // unresolved until real bank samples exist — no unique constraint yet.
+  importFingerprint String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([importBatchId])
 }
 
 model Receipt {
-  id                String           @id @default(uuid())
+  id                  String           @id @default(uuid())
   // Relative reference resolved by the receipt store (local dir for MVP).
-  filePath          String
+  filePath            String
   // Original client filename, metadata only. Never used as a path.
-  originalName      String
-  mimeType          String
-  size              Int
-  userId            String?
-  user              User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status            ReceiptStatus    @default(UPLOADED)
-  extractedMerchant String?
-  extractedAmount   BigInt?
-  extractedDate     DateTime?        @db.Date
-  extractedType     TransactionType? @default(EXPENSE)
+  originalName        String
+  mimeType            String
+  size                Int
+  userId              String?
+  user                User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status              ReceiptStatus    @default(UPLOADED)
+  extractedMerchant   String?
+  extractedAmount     BigInt?
+  extractedDate       DateTime?        @db.Date
+  extractedType       TransactionType? @default(EXPENSE)
   // Raw category candidate string. Never auto-creates a Category.
-  extractedCategory String?
+  extractedCategory   String?
   // When the last extraction ran (null = never extracted).
-  extractedAt       DateTime?
+  extractedAt         DateTime?
   suggestedCategoryId String?
-  suggestedCategory Category?        @relation(fields: [suggestedCategoryId], references: [id])
-  rawAiJson         Json?
-  error             String?
-  transaction       Transaction?     @relation("ReceiptTransaction")
-  createdAt         DateTime         @default(now())
+  suggestedCategory   Category?        @relation(fields: [suggestedCategoryId], references: [id])
+  rawAiJson           Json?
+  error               String?
+  transaction         Transaction?     @relation("ReceiptTransaction")
+  createdAt           DateTime         @default(now())
+}
+
+// One uploaded bank-statement PDF. Identity is (userId, fileHash): the same
+// user re-uploading the same bytes must not create a second batch (DB-enforced
+// via @@unique, not app code alone). bankId is explicit-only, never guessed;
+// statement period is null until a future extraction phase fills it in.
+model ImportBatch {
+  id            String        @id @default(uuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 hex of the exact PDF bytes.
+  fileHash      String
+  // Relative reference resolved by the receipt store (local dir for MVP).
+  filePath      String
+  // Original client filename, metadata only. Never used as a path.
+  originalName  String
+  mimeType      String
+  size          Int
+  bankId        String?
+  statementFrom DateTime?     @db.Date
+  statementTo   DateTime?     @db.Date
+  status        ImportStatus  @default(UPLOADED)
+  error         String?
+  transactions  Transaction[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([userId, fileHash])
+  @@index([userId])
 }

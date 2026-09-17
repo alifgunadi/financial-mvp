@@ -71,6 +71,19 @@ function normalizeText(v: string | null, max: number): string | null {
   return clean ? clean.slice(0, max) : null;
 }
 
+// Conservative secret scrub for the non-JSON fallback only: redacts obvious
+// credential patterns (never arbitrary strings). Runs before truncation so
+// no credential value survives via a long body. The JSON allow-list path
+// in sanitizeProviderBody below is unchanged.
+function redactSecretPatterns(s: string): string {
+  return s
+    .replace(/Authorization\s*:\s*[^\r\n,;]+/gi, "Authorization: [redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/=]+/g, "Bearer [redacted]")
+    .replace(/(Set-Cookie|Cookie)\s*:\s*[^\r\n]+/gi, "$1: [redacted]")
+    .replace(/(password\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"'&,;]+)/gi, "$1[redacted]")
+    .replace(/(api[_-]?key\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"'&,;]+)/gi, "$1[redacted]");
+}
+
 // Bounded single-line summary of a provider error body. Prefers the safe
 // error.message/code fields of a JSON error envelope over the raw body;
 // falls back to truncated text. The provider body is never combined with
@@ -80,7 +93,8 @@ function normalizeText(v: string | null, max: number): string | null {
 function sanitizeProviderBody(body: string): string {
   const key = env.GEMINI_API_KEY;
   const scrubbed =
-    key && body.includes(key) ? body.split(key).join("[redacted]") : body;  try {
+    key && body.includes(key) ? body.split(key).join("[redacted]") : body;
+  try {
     const parsed: unknown = JSON.parse(scrubbed);
     const err =
       typeof parsed === "object" && parsed !== null
@@ -101,9 +115,9 @@ function sanitizeProviderBody(body: string): string {
       if (parts.length > 0) return parts.join(" ").replace(/\s+/g, " ").slice(0, 500);
     }
   } catch {
-    // Not JSON: fall through to truncated text.
+    // Not JSON: fall through to truncated text with secret patterns redacted.
   }
-  return scrubbed.replace(/\s+/g, " ").trim().slice(0, 500);
+  return redactSecretPatterns(scrubbed).replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 const PROMPT = `You read an Indonesian payment receipt photo and return a single JSON object, nothing else.
@@ -171,7 +185,11 @@ export async function extractReceipt(
       signal: AbortSignal.timeout(60_000),
     });
   } catch (e) {
-    if (e instanceof Error && e.name === "TimeoutError")
+    // This fetch uses only AbortSignal.timeout(60_000): TimeoutError — and
+    // AbortError from the same timeout mechanism on some runtimes — means
+    // the provider did not answer in time. Genuine network failures surface
+    // as TypeError and stay 502 below.
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"))
       throw new AiError(504, "AI provider timeout", detail("TIMEOUT"));
     throw new AiError(502, "AI provider unreachable", detail("NETWORK"));
   }

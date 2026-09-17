@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import cors from "cors";
@@ -25,6 +26,7 @@ import {
 import {
   authSchema,
   createCategorySchema,
+  createImportSchema,
   createTransactionSchema,
   listCategoriesSchema,
   listTransactionsSchema,
@@ -143,6 +145,25 @@ function toApiReceipt(r: ReceiptWithSuggestion) {
     aiOriginal: toAiOriginal(r.rawAiJson),
     extractedAt: r.extractedAt ? r.extractedAt.toISOString() : null,
     error: r.error,
+  };
+}
+
+// Prisma ImportBatch → API shape. Never exposes filePath or userId.
+type ImportBatchRow = Prisma.ImportBatchGetPayload<Record<keyof never, never>>;
+
+function toApiImport(b: ImportBatchRow) {
+  return {
+    id: b.id,
+    fileHash: b.fileHash,
+    originalName: b.originalName,
+    mimeType: b.mimeType,
+    size: b.size,
+    bankId: b.bankId,
+    statementFrom: b.statementFrom ? toDateString(b.statementFrom) : null,
+    statementTo: b.statementTo ? toDateString(b.statementTo) : null,
+    status: toApi(b.status),
+    error: b.error,
+    createdAt: b.createdAt.toISOString(),
   };
 }
 
@@ -940,6 +961,159 @@ app.put("/api/receipts/:id", requireAuth, async (req, res) => {
       err: e,
     });
   }
+});
+
+// ---------- statement imports (foundation: upload + identity only) ----------
+
+// Foundation only: records the uploaded PDF and its exact identity. No text
+// extraction, no bank parsing, no Transaction creation happens here.
+
+const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
+
+const uploadImport = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_STATEMENT_BYTES, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const ext = file.originalname.slice(file.originalname.lastIndexOf(".")).toLowerCase();
+    if (file.mimetype !== "application/pdf" || ext !== ".pdf")
+      return cb(new Error("unsupported file type (pdf only)"));
+    cb(null, true);
+  },
+});
+
+// Client MIME/extension are hints only; the %PDF- magic decides.
+function sniffPdf(buf: Buffer): boolean {
+  return (
+    buf.length >= 5 &&
+    buf[0] === 0x25 && // %
+    buf[1] === 0x50 && // P
+    buf[2] === 0x44 && // D
+    buf[3] === 0x46 && // F
+    buf[4] === 0x2d // -
+  );
+}
+
+function sha256Hex(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+app.post("/api/imports", requireAuth, (req, res) => {
+  uploadImport.single("file")(req, res, async (err: unknown) => {
+    if (!req.user) return unauthorized(res, req);
+    const userId = req.user.id;
+    if (err) {
+      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE")
+        return sendError(res, req, {
+          status: 413,
+          code: "FILE_ERROR",
+          message: "file too large (max 10MB)",
+          operation: "import_upload",
+        });
+      const message = err instanceof Error ? err.message : "invalid upload";
+      return sendError(res, req, {
+        status: 400,
+        code: "FILE_ERROR",
+        message,
+        operation: "import_upload",
+      });
+    }
+    const file = (req as { file?: UploadedFile }).file;
+    if (!file || file.size === 0)
+      return sendError(res, req, {
+        status: 400,
+        code: "FILE_ERROR",
+        message: "file is required",
+        operation: "import_upload",
+      });
+    if (!sniffPdf(file.buffer))
+      return sendError(res, req, {
+        status: 400,
+        code: "FILE_ERROR",
+        message: "file is not a valid PDF",
+        operation: "import_upload",
+      });
+    // Explicit bank identifier only; absent stays null (unresolved).
+    const bodyParsed = createImportSchema.safeParse(req.body ?? {});
+    if (!bodyParsed.success)
+      return badRequest(res, req, bodyParsed.error, "import_upload");
+    const bankId = bodyParsed.data.bank ?? null;
+    const fileHash = sha256Hex(file.buffer);
+    // Fast path: same user + same bytes already imported. The DB unique
+    // constraint below remains the final guard against concurrent races.
+    const existing = await db.importBatch
+      .findFirst({ where: { userId, fileHash }, select: { id: true } })
+      .catch(() => null);
+    if (existing)
+      return sendError(res, req, {
+        status: 409,
+        code: "CONFLICT_ERROR",
+        message: "statement already imported",
+        operation: "import_upload",
+      });
+    // Metadata only; the original name is never used as a path.
+    const originalName =
+      Buffer.from(file.originalname, "latin1").toString("utf8").trim().slice(0, 255) ||
+      "statement.pdf";
+    const storedName = await saveReceiptFile(".pdf", file.buffer).catch(() => null);
+    if (!storedName)
+      return sendError(res, req, {
+        status: 500,
+        code: "FILE_ERROR",
+        message: "failed to store statement",
+        operation: "import_upload",
+      });
+    try {
+      // Upload only: status stays UPLOADED, no Transaction is created.
+      const b = await db.importBatch.create({
+        data: {
+          fileHash,
+          filePath: `uploads/${storedName}`,
+          originalName,
+          mimeType: "application/pdf",
+          size: file.size,
+          bankId,
+          userId,
+        },
+      });
+      res.status(201).json(toApiImport(b));
+    } catch (e) {
+      await deleteReceiptFile(storedName);
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
+        return sendError(res, req, {
+          status: 409,
+          code: "CONFLICT_ERROR",
+          message: "statement already imported",
+          operation: "import_upload",
+          causeCode: prismaCause(e),
+        });
+      sendError(res, req, {
+        status: 500,
+        code: "DATABASE_ERROR",
+        message: "failed to save statement import",
+        operation: "import_upload",
+        causeCode: prismaCause(e),
+        err: e,
+      });
+    }
+  });
+});
+
+app.get("/api/imports/:id", requireAuth, async (req, res) => {
+  const parsed = z.object({ id: z.string().uuid() }).safeParse(req.params);
+  if (!parsed.success) return badRequest(res, req, parsed.error, "get_import");
+  if (!req.user) return unauthorized(res, req);
+  // Scoped lookup: another user's import reads as not found (no leak).
+  const batch = await db.importBatch
+    .findFirst({ where: { id: parsed.data.id, userId: req.user.id } })
+    .catch(() => null);
+  if (!batch)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "import not found",
+      operation: "get_import",
+    });
+  res.json(toApiImport(batch));
 });
 
 app.get("/api/health", (_req, res) => {
