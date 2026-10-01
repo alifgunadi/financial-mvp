@@ -14,12 +14,6 @@ const envSchema = z.object({
     .string()
     .min(1)
     .default("http://localhost:7364,http://127.0.0.1:7364"),
-  // Set true in HTTPS production so the session cookie gets Secure.
-  // (String enum: coerce.boolean() would turn "false" into true.)
-  COOKIE_SECURE: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
 });
 
 export const env = envSchema.parse(process.env);

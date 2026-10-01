@@ -36,11 +36,12 @@ import {
 
 const app = express();
 // Centralized CORS (the only CORS config in the app): explicit origin
-// allowlist + credentials. No per-endpoint CORS, no manual ACAO headers.
+// allowlist. No per-endpoint CORS, no manual ACAO headers. Authentication
+// travels in the Authorization header, so credentialed CORS is off.
 const allowedOrigins = env.WEB_ORIGIN.split(",")
   .map((s) => s.trim().replace(/\/+$/, ""))
   .filter(Boolean);
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 app.use(requestContext);
 
@@ -112,8 +113,8 @@ function toAiOriginal(raw: unknown) {
   const o = raw as Record<string, unknown>;
   const amount =
     typeof o.amount === "number" &&
-    Number.isInteger(o.amount) &&
-    (o.amount as number) > 0
+      Number.isInteger(o.amount) &&
+      (o.amount as number) > 0
       ? (o.amount as number)
       : null;
   const date = typeof o.date === "string" ? (o.date as string) : null;
@@ -137,10 +138,10 @@ function toApiReceipt(r: ReceiptWithSuggestion) {
     },
     suggestedCategory: r.suggestedCategory
       ? {
-          id: r.suggestedCategory.id,
-          name: r.suggestedCategory.name,
-          type: toApi(r.suggestedCategory.type),
-        }
+        id: r.suggestedCategory.id,
+        name: r.suggestedCategory.name,
+        type: toApi(r.suggestedCategory.type),
+      }
       : null,
     aiOriginal: toAiOriginal(r.rawAiJson),
     extractedAt: r.extractedAt ? r.extractedAt.toISOString() : null,
@@ -190,9 +191,9 @@ app.post("/api/auth/register", async (req, res) => {
         role,
       },
     });
-    await createSession(res, { id: user.id, email: user.email, role });
+    const sessionToken = await createSession({ id: user.id, email: user.email, role });
     logInfo({ req, operation: "register_user", message: `user registered id=${user.id}` });
-    res.status(201).json({ id: user.id, email: user.email, role });
+    res.status(201).json({ id: user.id, email: user.email, role, sessionToken });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
       return sendError(res, req, {
@@ -232,9 +233,9 @@ app.post("/api/auth/login", async (req, res) => {
     });
   try {
     const role = user.role as "CLIENT" | "SUPERADMIN";
-    await createSession(res, { id: user.id, email: user.email, role });
+    const sessionToken = await createSession({ id: user.id, email: user.email, role });
     logInfo({ req, operation: "login_user", message: `user logged in id=${user.id}` });
-    res.json({ id: user.id, email: user.email, role });
+    res.json({ id: user.id, email: user.email, role, sessionToken });
   } catch (e) {
     sendError(res, req, {
       status: 500,
@@ -248,7 +249,7 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 app.post("/api/auth/logout", async (req, res) => {
-  await revokeSession(req, res);
+  await revokeSession(req);
   res.json({ ok: true });
 });
 
@@ -335,11 +336,11 @@ app.get("/api/transactions", requireAuth, async (req, res) => {
     ...(categoryId ? { categoryId } : {}),
     ...(from || to
       ? {
-          date: {
-            ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}),
-            ...(to ? { lte: new Date(`${to}T00:00:00Z`) } : {}),
-          },
-        }
+        date: {
+          ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}),
+          ...(to ? { lte: new Date(`${to}T00:00:00Z`) } : {}),
+        },
+      }
       : {}),
   };
   try {
@@ -434,13 +435,13 @@ function toSpendingPace(opts: {
   spentToday: number;
 }):
   | {
-      asOf: string;
-      remainingDays: number;
-      recommendedMaxPerDay: number;
-      spentToday: number;
-      remainingToday: number;
-      status: string;
-    }
+    asOf: string;
+    remainingDays: number;
+    recommendedMaxPerDay: number;
+    spentToday: number;
+    remainingToday: number;
+    status: string;
+  }
   | null {
   const { asOf, to, totalIncome, totalExpense, spentToday } = opts;
   if (to === null) return null; // unbounded: no end date to pace against
@@ -479,11 +480,11 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
   const dateRange =
     from || to
       ? {
-          date: {
-            ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}),
-            ...(to ? { lte: new Date(`${to}T00:00:00Z`) } : {}),
-          },
-        }
+        date: {
+          ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}),
+          ...(to ? { lte: new Date(`${to}T00:00:00Z`) } : {}),
+        },
+      }
       : {};
   try {
     // All math in SQL (SUM / GROUP BY), scoped to the caller. Only aggregates cross the wire.
@@ -522,8 +523,8 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
     ]);
     const categories = groups.length
       ? await db.category.findMany({
-          where: { userId, id: { in: groups.map((g) => g.categoryId) } },
-        })
+        where: { userId, id: { in: groups.map((g) => g.categoryId) } },
+      })
       : [];
     const nameOf = new Map(categories.map((c) => [c.id, c.name]));
     const totalIncome = Number(income._sum.amount ?? 0);
@@ -534,7 +535,7 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
       totalIncome,
       totalExpense,
       // Period net flow (income − expense), NOT an account balance.
-      balance: totalIncome - totalExpense,      expenseByCategory: groups
+      balance: totalIncome - totalExpense, expenseByCategory: groups
         .map((g) => ({
           categoryId: g.categoryId,
           name: nameOf.get(g.categoryId) ?? "Unknown",
@@ -739,7 +740,7 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
         where: { id: receipt.id },
         data: { status: "FAILED", error: "stored file missing" },
       })
-      .catch(() => {});
+      .catch(() => { });
     return sendError(res, req, {
       status: 404,
       code: "NOT_FOUND_ERROR",
@@ -752,7 +753,7 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
       where: { id: receipt.id },
       data: { status: "PROCESSING", error: null },
     })
-    .catch(() => {});
+    .catch(() => { });
   const started = Date.now();
   try {
     // Candidate only: updates this Receipt, never creates a Transaction.
@@ -800,13 +801,13 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
       const d = err.detail;
       const diag = d
         ? `receipt=${receipt.id} provider=${d.provider} model=${d.model} durationMs=${Date.now() - started}` +
-          (d.providerStatus !== undefined ? ` providerStatus=${d.providerStatus}` : "") +
-          ` type=${d.type}` +
-          (d.providerMessage ? ` providerBody="${d.providerMessage}"` : "")
+        (d.providerStatus !== undefined ? ` providerStatus=${d.providerStatus}` : "") +
+        ` type=${d.type}` +
+        (d.providerMessage ? ` providerBody="${d.providerMessage}"` : "")
         : `receipt=${receipt.id} durationMs=${Date.now() - started}`;
       await db.receipt
         .update({ where: { id: receipt.id }, data: { status: "FAILED", error: err.message } })
-        .catch(() => {});
+        .catch(() => { });
       sendError(res, req, {
         status: err.status,
         code: "AI_ERROR",
@@ -821,7 +822,7 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
     // not the provider. Label INTERNAL_ERROR and keep the stack server-side.
     await db.receipt
       .update({ where: { id: receipt.id }, data: { status: "FAILED", error: "extraction failed" } })
-      .catch(() => {});
+      .catch(() => { });
     sendError(res, req, {
       status: 500,
       code: "INTERNAL_ERROR",

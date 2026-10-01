@@ -2,13 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type express from "express";
 import { db } from "./db.js";
-import { env } from "./env.js";
 import { sendError } from "./logger.js";
 
-// Session auth boundary: HttpOnly cookie holds the raw token,
-// DB stores only its SHA-256 hash. Nothing secret is ever logged.
+// Session auth boundary: the raw token is returned to the caller once
+// (register/login response) and never stored server-side. The DB keeps
+// only its SHA-256 hash. Nothing secret is ever logged.
 
-export const AUTH_COOKIE = "sid";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // Locked business rule: the only account eligible for SUPERADMIN.
@@ -53,53 +52,30 @@ function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 
-export async function createSession(
-  res: express.Response,
-  user: AuthUser,
-): Promise<void> {
+export async function createSession(user: AuthUser): Promise<string> {
   const raw = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   await db.session.create({
     data: { id: hashToken(raw), userId: user.id, expiresAt },
   });
-  const parts = [
-    `${AUTH_COOKIE}=${raw}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${SESSION_TTL_MS / 1000}`,
-  ];
-  if (env.COOKIE_SECURE) parts.push("Secure");
-  res.appendHeader("Set-Cookie", parts.join("; "));
+  return raw;
 }
 
-export function clearSessionCookie(res: express.Response): void {
-  const parts = [`${AUTH_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
-  if (env.COOKIE_SECURE) parts.push("Secure");
-  res.appendHeader("Set-Cookie", parts.join("; "));
-}
-
-// Idempotent: missing/invalid session still clears the cookie.
-export async function revokeSession(
-  req: express.Request,
-  res: express.Response,
-): Promise<void> {
-  const raw = readSessionToken(req);
+// Idempotent: missing/invalid token deletes nothing.
+export async function revokeSession(req: express.Request): Promise<void> {
+  const raw = readBearerToken(req);
   if (raw)
     await db.session.delete({ where: { id: hashToken(raw) } }).catch(() => {});
-  clearSessionCookie(res);
 }
 
-function readSessionToken(req: express.Request): string | null {
-  const header = req.headers.cookie;
+function readBearerToken(req: express.Request): string | null {
+  const header = req.headers.authorization;
   if (!header) return null;
-  for (const part of header.split(";")) {
-    const idx = part.indexOf("=");
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === AUTH_COOKIE)
-      return decodeURIComponent(part.slice(idx + 1).trim());
-  }
-  return null;
+  const idx = header.indexOf(" ");
+  if (idx === -1) return null;
+  if (header.slice(0, idx).toLowerCase() !== "bearer") return null;
+  const token = header.slice(idx + 1).trim();
+  return token ? token : null;
 }
 
 export async function requireAuth(
@@ -107,7 +83,7 @@ export async function requireAuth(
   res: express.Response,
   next: express.NextFunction,
 ): Promise<void> {
-  const raw = readSessionToken(req);
+  const raw = readBearerToken(req);
   if (!raw) {
     sendError(res, req, {
       status: 401,

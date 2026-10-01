@@ -1,10 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiUpload } from "./client";
+import { api, apiUpload, setSessionToken } from "./client";
 
 export interface AuthUser {
   id: string;
   email: string;
   role: "CLIENT" | "SUPERADMIN";
+}
+
+// Register/login response: AuthUser plus the runtime-only session token.
+// The token lives in frontend memory only and is verified via /api/auth/me.
+export interface AuthSession extends AuthUser {
+  sessionToken: string;
 }
 
 export function useMe() {
@@ -19,11 +25,15 @@ export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { email: string; password: string }) =>
-      api<AuthUser>("/api/auth/register", {
+      api<AuthSession>("/api/auth/register", {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    onSuccess: (user) => qc.setQueryData(["me"], user),
+    // Server is the source of truth: store the token, then re-verify via me.
+    onSuccess: (session) => {
+      setSessionToken(session.sessionToken);
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 }
 
@@ -31,11 +41,15 @@ export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { email: string; password: string }) =>
-      api<AuthUser>("/api/auth/login", {
+      api<AuthSession>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    onSuccess: (user) => qc.setQueryData(["me"], user),
+    // Server is the source of truth: store the token, then re-verify via me.
+    onSuccess: (session) => {
+      setSessionToken(session.sessionToken);
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 }
 
@@ -44,6 +58,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
     onSuccess: () => {
+      setSessionToken(null);
       qc.clear();
     },
   });
