@@ -1158,6 +1158,10 @@ app.use(
   },
 );
 
+// Vercel entrypoint: default export agar zero-config detection menemukan
+// Express app ini (src/index.ts). app.listen di bawah hanya untuk local dev.
+export default app;
+
 app.listen(env.PORT, () => {
   logInfo({ message: `api listening on http://localhost:${env.PORT}` });
 });
