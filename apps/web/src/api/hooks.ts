@@ -357,3 +357,142 @@ export function useUpdateReceipt(id: string) {
     onSuccess: (data) => qc.setQueryData(["receipt", id], data),
   });
 }
+
+// ---------- statement imports (Stage 6: PDF upload → preview → confirm) ----------
+
+// Prisma ImportBatch → API shape (mirrors toApiImport: never exposes
+// filePath or userId). bankId/statementFrom/To are null until resolved.
+export interface ImportBatch {
+  id: string;
+  fileHash: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  bankId: string | null;
+  statementFrom: string | null;
+  statementTo: string | null;
+  status: string;
+  error: string | null;
+  createdAt: string;
+}
+
+// One ImportCandidate per parser row (mirrors toImportCandidates + the
+// preview mapping: lowercase type/disposition, whole-IDR amount).
+// merchant is reserved (always null from the parser); the description
+// lives in note. fingerprint is the only identity (rowIndex restarts
+// per pocket and is not unique across candidates).
+export interface ImportCandidate {
+  type: TransactionType;
+  amount: number;
+  date: string;
+  merchant: string | null;
+  note: string;
+  reference: string | null;
+  fingerprint: string;
+  disposition: string;
+  pocket: string;
+  rowIndex: number;
+}
+
+export interface ImportDiagnostic {
+  pocket: string | null;
+  page: number | null;
+  rowIndex: number | null;
+  code: string;
+}
+
+export interface ImportPocket {
+  pocket: string;
+  openingMinor: number | null;
+  totalIncomeMinor: number;
+  totalExpenseMinor: number;
+  closingMinor: number | null;
+  rowCount: number;
+  reconciled: boolean;
+  importable: boolean;
+  diagnostics: ImportDiagnostic[];
+}
+
+export interface ImportStatementPeriod {
+  from: string;
+  to: string;
+}
+
+export interface ImportDetection {
+  isBlu: boolean;
+  confidence: number;
+  signals: { id: string; weight: number; matched: boolean }[];
+}
+
+export interface ImportSummary {
+  total: number;
+  ready: number;
+  skippedInternalTransfer: number;
+  blockedFractional: number;
+  blockedUnreconciled: number;
+  readyIncome: number;
+  readyExpense: number;
+}
+
+export interface ImportPreview {
+  batch: ImportBatch;
+  bank: string;
+  detected: ImportDetection;
+  statementPeriod: ImportStatementPeriod | null;
+  pockets: ImportPocket[];
+  globalReconciled: boolean | null;
+  importable: boolean;
+  diagnostics: ImportDiagnostic[];
+  summary: ImportSummary;
+  candidates: ImportCandidate[];
+}
+
+export interface ConfirmImportInput {
+  fingerprint: string;
+  categoryId: string;
+}
+
+export interface ConfirmImportResponse {
+  batch: ImportBatch;
+  created: number;
+  skipped: number;
+}
+
+export function useUploadStatement() {
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return apiUpload<ImportBatch>("/api/imports", form);
+    },
+  });
+}
+
+export function useImportPreview(id: string | null) {
+  return useQuery({
+    queryKey: ["imports", id, "preview"],
+    queryFn: () => api<ImportPreview>(`/api/imports/${id}/preview`),
+    enabled: !!id,
+    retry: false,
+  });
+}
+
+export function useConfirmImport(id: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (candidates: ConfirmImportInput[]) => {
+      if (!id) throw new Error("no import selected");
+      return api<ConfirmImportResponse>(`/api/imports/${id}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({ candidates }),
+      });
+    },
+    // Confirm writes Transactions: same invalidation as manual creation,
+    // plus the preview of this batch (batch is now IMPORTED).
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      if (id) qc.invalidateQueries({ queryKey: ["imports", id, "preview"] });
+    },
+  });
+}

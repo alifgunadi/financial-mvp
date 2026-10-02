@@ -8,6 +8,7 @@ import CategoryManager from "./CategoryManager.tsx";
 import DashboardCard from "./DashboardCard.tsx";
 import ReceiptUpload from "./ReceiptUpload.tsx";
 import SpendingPaceCard from "./SpendingPaceCard.tsx";
+import StatementImport from "./StatementImport.tsx";
 import TransactionForm from "./TransactionForm.tsx";
 import TransactionList from "./TransactionList.tsx";
 import TransactionRow, { fmtIDR } from "./TransactionRow.tsx";
@@ -279,6 +280,11 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Statement import — full width so candidate review stays readable */}
+      <div id="imports" className="mt-6 scroll-mt-24">
+        <StatementImport />
+      </div>
 
       {/* Row 5: operations — history log + action sidebar */}
       <div className="mt-6 grid grid-cols-12 items-start gap-6 [&>*]:min-w-0">

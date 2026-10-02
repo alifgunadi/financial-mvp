@@ -67,6 +67,13 @@ export const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    id: "imports",
+    label: "Statement Import",
+    icon: (cls) => (
+      <Icon cls={cls} d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" />
+    ),
+  },
+  {
     id: "history",
     label: "History",
     icon: (cls) => <Icon cls={cls} d="M4 6h16M4 12h16M4 18h10" />,
