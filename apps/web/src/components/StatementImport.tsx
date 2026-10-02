@@ -92,30 +92,50 @@ function CandidateCard({
 
 // Review view is keyed by import id from the parent, so assignments
 // always start empty for a new batch (never carried over).
-function ImportReview({ importId }: { importId: string }) {
+function ImportReview({
+  importId,
+  onViewPeriod,
+}: {
+  importId: string;
+  onViewPeriod?: (from: string, to: string) => void;
+}) {
   const preview = useImportPreview(importId);
   const confirm = useConfirmImport(importId);
   const { data: categories } = useCategories();
   // Draft review state: fingerprint → chosen categoryId. Fingerprint is
   // the only candidate identity (rowIndex is per-pocket, not unique).
+  // Missing entries mean uncategorized (sent as null); category is
+  // optional for import rows.
   const [assignments, setAssignments] = useState<Record<string, string>>({});
 
   const candidates = preview.data?.candidates ?? [];
+  // Statement period for the post-confirm shortcut: the parsed period
+  // first, the stored batch range as fallback (currently unresolved).
+  // Never auto-applied: only used when the user presses the button below.
+  const statementPeriod =
+    preview.data?.statementPeriod ??
+    (preview.data?.batch.statementFrom && preview.data?.batch.statementTo
+      ? {
+        from: preview.data.batch.statementFrom,
+        to: preview.data.batch.statementTo,
+      }
+      : null);
   const ready = candidates.filter(isReady);
   const categorized = ready.filter((c) => assignments[c.fingerprint]);
-  const remaining = ready.length - categorized.length;
-  const canConfirm =
-    ready.length > 0 && remaining === 0 && !confirm.isPending;
+  // Category is optional: confirm needs READY rows only, never a full
+  // set of assignments. Missing ones are sent as null (uncategorized).
+  const canConfirm = ready.length > 0 && !confirm.isPending;
 
   const submitConfirm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canConfirm) return;
-    // Exact-set: every READY candidate, fingerprint + categoryId only.
-    // The backend re-parses the PDF itself for the rest.
+    // Exact-set: every READY candidate, fingerprint + categoryId only
+    // (null when uncategorized). The backend re-parses the PDF itself
+    // for the rest.
     confirm.mutate(
       ready.map((c) => ({
         fingerprint: c.fingerprint,
-        categoryId: assignments[c.fingerprint],
+        categoryId: assignments[c.fingerprint] ?? null,
       })),
     );
   };
@@ -271,11 +291,7 @@ function ImportReview({ importId }: { importId: string }) {
                   disabled={!canConfirm}
                   className="w-full rounded bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50"
                 >
-                  {confirm.isPending
-                    ? "Confirming…"
-                    : remaining > 0
-                      ? `${remaining} remaining`
-                      : "Confirm import"}
+                  {confirm.isPending ? "Confirming…" : "Confirm import"}
                 </button>
                 {confirm.isError && (
                   <p className="text-sm text-red-600">
@@ -293,9 +309,33 @@ function ImportReview({ importId }: { importId: string }) {
                   </p>
                 )}
                 {confirm.isSuccess && (
-                  <p className="text-sm text-green-700">
-                    Imported {confirm.data.created} transactions.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-green-700">
+                      Imported {confirm.data.created} transactions.
+                    </p>
+                    {statementPeriod && onViewPeriod && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-canvas p-3">
+                        <p className="text-sm text-subtle">
+                          Statement period:{" "}
+                          <span className="font-medium text-ink">
+                            {statementPeriod.from} — {statementPeriod.to}
+                          </span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onViewPeriod(
+                              statementPeriod.from,
+                              statementPeriod.to,
+                            )
+                          }
+                          className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white"
+                        >
+                          Lihat periode ini
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </form>
             )}
@@ -306,7 +346,11 @@ function ImportReview({ importId }: { importId: string }) {
   );
 }
 
-export default function StatementImport() {
+export default function StatementImport({
+  onViewPeriod,
+}: {
+  onViewPeriod?: (from: string, to: string) => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -360,7 +404,11 @@ export default function StatementImport() {
         )}
       </form>
       {selectedImportId && (
-        <ImportReview key={selectedImportId} importId={selectedImportId} />
+        <ImportReview
+          key={selectedImportId}
+          importId={selectedImportId}
+          onViewPeriod={onViewPeriod}
+        />
       )}
     </DashboardCard>
   );

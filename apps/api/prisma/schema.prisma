@@ -95,8 +95,10 @@ model Transaction {
   date              DateTime          @db.Date
   note              String?
   merchant          String?
-  categoryId        String
-  category          Category          @relation(fields: [categoryId], references: [id])
+  // Nullable for statement-import rows confirmed without a category.
+  // Manual creation still requires a category (enforced in the route).
+  categoryId        String?
+  category          Category?         @relation(fields: [categoryId], references: [id])
   userId            String?
   user              User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
   receiptId         String?           @unique

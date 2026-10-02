@@ -16,7 +16,7 @@ export default function TransactionRow({ t }: { t: Transaction }) {
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">
-          {t.category.name}
+          {t.category?.name ?? "Uncategorized"}
           <span className="ml-2 text-xs font-normal text-subtle">{t.date}</span>
         </p>
         {(t.merchant || t.note) && (

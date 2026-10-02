@@ -56,6 +56,15 @@ function toDb<T extends string>(t: T): Uppercase<T> {
   return t.toUpperCase() as Uppercase<T>;
 }
 const toApi = (t: string) => t.toLowerCase();
+
+// Category-type compatibility: BOTH fits everywhere, otherwise the
+// category type must equal the transaction type (Prisma enum literals).
+function categoryMatchesType(
+  categoryType: "INCOME" | "EXPENSE" | "BOTH",
+  txType: "INCOME" | "EXPENSE",
+): boolean {
+  return categoryType === "BOTH" || categoryType === txType;
+}
 const toDateString = (d: Date) => d.toISOString().slice(0, 10);
 
 function badRequest(
@@ -98,11 +107,15 @@ function toApiTransaction(t: TxWithCategory) {
     date: toDateString(t.date),
     note: t.note,
     merchant: t.merchant,
-    category: {
-      id: t.category.id,
-      name: t.category.name,
-      type: toApi(t.category.type),
-    },
+    // Null for statement-import rows confirmed without a category.
+    // Manual creation still requires one, so those rows always have it.
+    category: t.category
+      ? {
+        id: t.category.id,
+        name: t.category.name,
+        type: toApi(t.category.type),
+      }
+      : null,
     createdAt: t.createdAt.toISOString(),
   };
 }
@@ -387,13 +400,26 @@ app.post("/api/transactions", requireAuth, async (req, res) => {
   // Ownership check: the category must belong to the caller.
   // Same "not found" message as a missing id: no existence leak.
   const category = await db.category
-    .findFirst({ where: { id: categoryId, userId }, select: { id: true } })
+    .findFirst({
+      where: { id: categoryId, userId },
+      select: { id: true, type: true },
+    })
     .catch(() => null);
   if (!category)
     return sendError(res, req, {
       status: 400,
       code: "VALIDATION_ERROR",
       message: "category not found",
+      operation: "create_transaction",
+    });
+  // Type compatibility: BOTH fits everywhere, otherwise the category
+  // type must equal the transaction type. Client filtering is UX only;
+  // this is the final validation.
+  if (!categoryMatchesType(category.type, toDb(type)))
+    return sendError(res, req, {
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "category type mismatch",
       operation: "create_transaction",
     });
   try {
@@ -529,9 +555,15 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
         },
       }),
     ]);
-    const categories = groups.length
+    // Uncategorized import rows group under a null categoryId, which
+    // needs no lookup and is labeled below. Totals are unaffected: the
+    // SUM aggregates above have no category filter.
+    const categorizedIds = groups
+      .map((g) => g.categoryId)
+      .filter((id): id is string => id !== null);
+    const categories = categorizedIds.length
       ? await db.category.findMany({
-        where: { userId, id: { in: groups.map((g) => g.categoryId) } },
+        where: { userId, id: { in: categorizedIds } },
       })
       : [];
     const nameOf = new Map(categories.map((c) => [c.id, c.name]));
@@ -546,7 +578,10 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
       balance: totalIncome - totalExpense, expenseByCategory: groups
         .map((g) => ({
           categoryId: g.categoryId,
-          name: nameOf.get(g.categoryId) ?? "Unknown",
+          name:
+            g.categoryId === null
+              ? "Uncategorized"
+              : (nameOf.get(g.categoryId) ?? "Unknown"),
           total: Number(g._sum.amount ?? 0),
         }))
         .sort((a, b) => b.total - a.total),
@@ -909,6 +944,94 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
 
 // ---------- receipts (Stage 4 review: read candidate) ----------
 
+// Static single-segment route: must stay BEFORE "/api/receipts/:id"
+// below, otherwise "latest" is captured as an :id and rejected as a
+// non-uuid. Returns at most one row, owned by the caller.
+app.get("/api/receipts/latest", requireAuth, async (req, res) => {
+  if (!req.user) return unauthorized(res, req);
+  // No updatedAt on Receipt (adding one is a migration), so "latest"
+  // means latest uploaded/extracted; review edits do not reorder.
+  const receipt = await db.receipt
+    .findFirst({
+      where: { userId: req.user.id, status: "NEEDS_REVIEW" },
+      orderBy: { createdAt: "desc" },
+      include: { suggestedCategory: true },
+    })
+    .catch(() => null);
+  res.json({ receipt: receipt ? toApiReceipt(receipt) : null });
+});
+
+app.delete("/api/receipts/:id", requireAuth, async (req, res) => {
+  const parsed = z.object({ id: z.string().uuid() }).safeParse(req.params);
+  if (!parsed.success) return badRequest(res, req, parsed.error, "delete_receipt");
+  if (!req.user) return unauthorized(res, req);
+  const userId = req.user.id;
+  // Scoped lookup: another user's receipt reads as not found (no leak).
+  const receipt = await db.receipt
+    .findFirst({ where: { id: parsed.data.id, userId } })
+    .catch(() => null);
+  if (!receipt)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "receipt not found",
+      operation: "delete_receipt",
+    });
+  // Only unconfirmed reviews are deletable. A CONFIRMED receipt owns a
+  // Transaction (created atomically at confirm); it must never be
+  // deleted through here, and no cascade may touch that Transaction.
+  if (receipt.status !== "NEEDS_REVIEW") {
+    const message =
+      receipt.status === "CONFIRMED"
+        ? "receipt already confirmed"
+        : "receipt cannot be deleted";
+    return sendError(res, req, {
+      status: 409,
+      code: "CONFLICT_ERROR",
+      message,
+      operation: "delete_receipt",
+    });
+  }
+  // Defensive: NEEDS_REVIEW rows never have a Transaction (confirm flips
+  // the status atomically), but refuse rather than force-delete.
+  const linked = await db.transaction
+    .findFirst({ where: { receiptId: receipt.id }, select: { id: true } })
+    .catch(() => null);
+  if (linked)
+    return sendError(res, req, {
+      status: 409,
+      code: "CONFLICT_ERROR",
+      message: "receipt already confirmed",
+      operation: "delete_receipt",
+    });
+  try {
+    await db.receipt.delete({ where: { id: receipt.id } });
+  } catch (e) {
+    // Lost a race with a concurrent delete/confirm: the row is already
+    // gone, so report it as not found (second DELETE -> 404).
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025")
+      return sendError(res, req, {
+        status: 404,
+        code: "NOT_FOUND_ERROR",
+        message: "receipt not found",
+        operation: "delete_receipt",
+      });
+    return sendError(res, req, {
+      status: 500,
+      code: "DATABASE_ERROR",
+      message: "failed to delete receipt",
+      operation: "delete_receipt",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
+  // Best-effort file cleanup (same pattern as the upload rollback paths):
+  // the row is already gone, a leftover file is harmless and retried never.
+  await deleteReceiptFile(basename(receipt.filePath));
+  logInfo({ req, operation: "delete_receipt", message: `receipt deleted id=${receipt.id}` });
+  res.json({ ok: true });
+});
+
 app.get("/api/receipts/:id", requireAuth, async (req, res) => {
   const parsed = z.object({ id: z.string().uuid() }).safeParse(req.params);
   if (!parsed.success) return badRequest(res, req, parsed.error, "get_receipt");
@@ -979,13 +1102,36 @@ app.put("/api/receipts/:id", requireAuth, async (req, res) => {
       suggestedCategoryId = null;
     } else {
       const category = await db.category
-        .findFirst({ where: { id: categoryId, userId }, select: { id: true } })
+        .findFirst({
+          where: { id: categoryId, userId },
+          select: { id: true, type: true },
+        })
         .catch(() => null);
       if (!category)
         return sendError(res, req, {
           status: 400,
           code: "VALIDATION_ERROR",
           message: "category not found",
+          operation: "update_receipt",
+        });
+      // Type compatibility against the effective type (the incoming
+      // review value first, the stored extraction otherwise). An unset
+      // type cannot be checked, so only a known type is enforced.
+      // Client filtering is UX only; this is the final validation.
+      const effectiveType =
+        type !== undefined
+          ? type === null
+            ? null
+            : toDb(type)
+          : receipt.extractedType;
+      if (
+        effectiveType !== null &&
+        !categoryMatchesType(category.type, effectiveType)
+      )
+        return sendError(res, req, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+          message: "category type mismatch",
           operation: "update_receipt",
         });
       suggestedCategoryId = category.id;
@@ -1023,13 +1169,228 @@ app.put("/api/receipts/:id", requireAuth, async (req, res) => {
       operation: "receipt_review",
       message: `review saved receipt=${receipt.id}`,
     });
-    res.json(toApiReceipt(updated));
+    // Save-and-confirm: a complete stored review immediately becomes a
+    // Transaction through the shared confirm core (same validation and
+    // atomic claim as POST /confirm). Incomplete reviews stop here with
+    // transaction: null and stay NEEDS_REVIEW.
+    if (
+      updated.extractedAmount === null ||
+      updated.extractedType === null ||
+      updated.extractedDate === null ||
+      updated.suggestedCategoryId === null
+    )
+      return res.json({ receipt: toApiReceipt(updated), transaction: null });
+    try {
+      const vals = await validateStoredReviewForConfirm(updated, userId);
+      const result = await claimAndCreateReceiptTransaction(receipt.id, userId, vals);
+      logInfo({
+        req,
+        operation: "confirm_receipt",
+        message: `receipt confirmed id=${receipt.id} transaction=${result.created.id}`,
+      });
+      return res.json({
+        receipt: toApiReceipt(result.updated),
+        transaction: toApiTransaction(result.created),
+      });
+    } catch (e) {
+      if (e instanceof ConfirmValidationError)
+        return sendError(res, req, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+          message: e.message,
+          operation: "confirm_receipt",
+        });
+      if (e instanceof ConfirmConflictError)
+        return sendError(res, req, {
+          status: 409,
+          code: "CONFLICT_ERROR",
+          message: "receipt already confirmed",
+          operation: "confirm_receipt",
+        });
+      return sendError(res, req, {
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "failed to confirm receipt",
+        operation: "confirm_receipt",
+        causeCode: prismaCause(e),
+        err: e,
+      });
+    }
   } catch (e) {
     sendError(res, req, {
       status: 500,
       code: "DATABASE_ERROR",
       message: "failed to save review",
       operation: "update_receipt",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
+});
+
+// ---------- receipts (review confirm: create the Transaction) ----------
+
+// Shared receipt-confirm core: validates the STORED review, then claims
+// the receipt and creates exactly one Transaction atomically. Used by
+// POST /confirm directly and by PUT (save-and-confirm). Throws
+// ConfirmValidationError for 400 problems, ConfirmConflictError when
+// the row is already claimed.
+class ConfirmValidationError extends Error {}
+
+type StoredReviewValues = {
+  extractedAmount: bigint | null;
+  extractedType: "INCOME" | "EXPENSE" | null;
+  extractedDate: Date | null;
+  extractedMerchant: string | null;
+  suggestedCategoryId: string | null;
+};
+
+type ReadyReviewValues = {
+  amount: bigint;
+  type: "INCOME" | "EXPENSE";
+  date: Date;
+  merchant: string | null;
+  categoryId: string;
+};
+
+async function validateStoredReviewForConfirm(
+  review: StoredReviewValues,
+  userId: string,
+): Promise<ReadyReviewValues> {
+  if (
+    review.extractedAmount === null ||
+    review.extractedType === null ||
+    review.extractedDate === null ||
+    review.suggestedCategoryId === null
+  )
+    throw new ConfirmValidationError("receipt review incomplete");
+  // Ownership + type compatibility, same rules as manual creation.
+  const category = await db.category
+    .findFirst({
+      where: { id: review.suggestedCategoryId, userId },
+      select: { id: true, type: true },
+    })
+    .catch(() => null);
+  if (!category) throw new ConfirmValidationError("category not found");
+  if (!categoryMatchesType(category.type, review.extractedType))
+    throw new ConfirmValidationError("category type mismatch");
+  return {
+    amount: review.extractedAmount,
+    type: review.extractedType,
+    date: review.extractedDate,
+    merchant: review.extractedMerchant,
+    categoryId: review.suggestedCategoryId,
+  };
+}
+
+async function claimAndCreateReceiptTransaction(
+  receiptId: string,
+  userId: string,
+  vals: ReadyReviewValues,
+): Promise<{ created: TxWithCategory; updated: ReceiptWithSuggestion }> {
+  return db.$transaction(async (tx) => {
+    // Atomic claim: the conditional update holds the row lock, so a
+    // concurrent confirm blocks here, then finds no confirmable row
+    // after the first commits and gets a 409. Crash before commit
+    // rolls the claim back, leaving the receipt confirmable for retry.
+    const claimed = await tx.receipt.updateMany({
+      where: { id: receiptId, userId, status: "NEEDS_REVIEW" },
+      data: { status: "PROCESSING" },
+    });
+    if (claimed.count === 0) throw new ConfirmConflictError();
+    // Stored review values are the source of truth (never client
+    // state). No note field exists on receipts.
+    const created = await tx.transaction.create({
+      data: {
+        type: vals.type,
+        amount: vals.amount,
+        date: vals.date,
+        note: null,
+        merchant: vals.merchant,
+        source: "RECEIPT" as const,
+        userId,
+        categoryId: vals.categoryId,
+        receiptId,
+      },
+      include: { category: true },
+    });
+    const updated = await tx.receipt.update({
+      where: { id: receiptId },
+      data: { status: "CONFIRMED" },
+      include: { suggestedCategory: true },
+    });
+    return { created, updated };
+  });
+}
+
+// Confirm a reviewed receipt: builds exactly one Transaction from the
+// stored review values and flips the receipt to CONFIRMED atomically.
+// Category is required here (manual-transaction parity), unlike import.
+app.post("/api/receipts/:id/confirm", requireAuth, async (req, res) => {
+  const paramParsed = z.object({ id: z.string().uuid() }).safeParse(req.params);
+  if (!paramParsed.success)
+    return badRequest(res, req, paramParsed.error, "confirm_receipt");
+  if (!req.user) return unauthorized(res, req);
+  const userId = req.user.id;
+  // Scoped lookup: another user's receipt reads as not found (no leak).
+  const receipt = await db.receipt
+    .findFirst({ where: { id: paramParsed.data.id, userId } })
+    .catch(() => null);
+  if (!receipt)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "receipt not found",
+      operation: "confirm_receipt",
+    });
+  if (receipt.status !== "NEEDS_REVIEW") {
+    const message =
+      receipt.status === "CONFIRMED"
+        ? "receipt already confirmed"
+        : receipt.status === "FAILED"
+          ? "receipt extraction failed"
+          : "receipt not ready for review";
+    return sendError(res, req, {
+      status: 409,
+      code: "CONFLICT_ERROR",
+      message,
+      operation: "confirm_receipt",
+    });
+  }
+  // Completeness, ownership, and type compatibility are enforced on
+  // the stored values by the shared helper (source of truth).
+  try {
+    const vals = await validateStoredReviewForConfirm(receipt, userId);
+    const result = await claimAndCreateReceiptTransaction(receipt.id, userId, vals);
+    logInfo({
+      req,
+      operation: "confirm_receipt",
+      message: `receipt confirmed id=${receipt.id} transaction=${result.created.id}`,
+    });
+    res.status(201).json({
+      receipt: toApiReceipt(result.updated),
+      transaction: toApiTransaction(result.created),
+    });
+  } catch (e) {
+    if (e instanceof ConfirmValidationError)
+      return sendError(res, req, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: e.message,
+        operation: "confirm_receipt",
+      });
+    if (e instanceof ConfirmConflictError)
+      return sendError(res, req, {
+        status: 409,
+        code: "CONFLICT_ERROR",
+        message: "receipt already confirmed",
+        operation: "confirm_receipt",
+      });
+    sendError(res, req, {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "failed to confirm receipt",
+      operation: "confirm_receipt",
       causeCode: prismaCause(e),
       err: e,
     });
@@ -1286,7 +1647,7 @@ app.get("/api/imports/:id/preview", requireAuth, async (req, res) => {
 
 // Internal signal: the atomic batch claim inside the confirm transaction
 // found no confirmable row (lost a race with a concurrent confirm).
-class ConfirmConflictError extends Error {}
+class ConfirmConflictError extends Error { }
 
 app.post("/api/imports/:id/confirm", requireAuth, async (req, res) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
@@ -1388,19 +1749,26 @@ app.post("/api/imports/:id/confirm", requireAuth, async (req, res) => {
     return sendError(res, req, {
       status: 400,
       code: "VALIDATION_ERROR",
-      message: "all importable candidates require a category",
+      message: "all importable candidates must be submitted",
       operation: "confirm_import",
     });
   // Category ownership, bulk-checked before any write. Same "not found"
-  // message as manual transaction creation: no existence leak.
-  const categoryIds = [...new Set(body.data.candidates.map((a) => a.categoryId))];
+  // message as manual transaction creation: no existence leak. Null
+  // assignments (uncategorized import rows) skip the check entirely.
+  const categoryIds = [
+    ...new Set(
+      body.data.candidates
+        .map((a) => a.categoryId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
   const owned =
     categoryIds.length === 0
       ? []
       : await db.category
         .findMany({
           where: { id: { in: categoryIds }, userId },
-          select: { id: true },
+          select: { id: true, type: true },
         })
         .catch(() => null);
   if (!owned || owned.length !== categoryIds.length)
@@ -1410,6 +1778,28 @@ app.post("/api/imports/:id/confirm", requireAuth, async (req, res) => {
       message: "category not found",
       operation: "confirm_import",
     });
+  // Type compatibility per candidate: BOTH fits everywhere, otherwise
+  // the category type must equal that candidate's type (looked up by
+  // fingerprint; exact-set above guarantees every entry is READY).
+  // Null assignments skip the check entirely. Client filtering is UX
+  // only; this is the final validation.
+  const typeByCategoryId = new Map(owned.map((c) => [c.id, c.type] as const));
+  for (const a of body.data.candidates) {
+    if (a.categoryId === null) continue;
+    const candidate = readyByFingerprint.get(a.fingerprint);
+    const categoryType = typeByCategoryId.get(a.categoryId);
+    if (
+      candidate &&
+      categoryType &&
+      !categoryMatchesType(categoryType, candidate.type)
+    )
+      return sendError(res, req, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: "category type mismatch",
+        operation: "confirm_import",
+      });
+  }
   const categoryByFingerprint = new Map(
     body.data.candidates.map((a) => [a.fingerprint, a.categoryId] as const),
   );
@@ -1442,7 +1832,9 @@ app.post("/api/imports/:id/confirm", requireAuth, async (req, res) => {
             merchant: c.merchant,
             source: "IMPORT" as const,
             userId,
-            categoryId: categoryByFingerprint.get(c.fingerprint) as string,
+            categoryId: categoryByFingerprint.get(
+              c.fingerprint,
+            ) as string | null,
             importBatchId: batch.id,
             importFingerprint: c.fingerprint,
           })),

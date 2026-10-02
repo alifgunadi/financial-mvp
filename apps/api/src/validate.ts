@@ -82,8 +82,10 @@ export const createImportSchema = z.object({
     .optional(),
 });
 
-// Statement import confirm: manual category assignment per READY candidate.
+// Statement import confirm: category assignment per READY candidate.
 // Keyed by deterministic fingerprint (rowIndex is per-pocket, not unique).
+// categoryId is optional here (null = uncategorized import row); manual
+// transaction creation still requires one (createTransactionSchema).
 // Exact-set matching against the parser output is enforced in the handler.
 export const confirmImportSchema = z.object({
   candidates: z.array(
@@ -91,7 +93,7 @@ export const confirmImportSchema = z.object({
       fingerprint: z
         .string()
         .regex(/^[0-9a-f]{64}$/, "fingerprint must be sha256 hex"),
-      categoryId: z.string().uuid("categoryId must be a uuid"),
+      categoryId: z.string().uuid("categoryId must be a uuid").nullable(),
     }),
   ),
 });

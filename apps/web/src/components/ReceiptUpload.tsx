@@ -1,5 +1,9 @@
 import { useRef, useState } from "react";
-import { useExtractReceipt, useUploadReceipt } from "../api/hooks";
+import {
+  useExtractReceipt,
+  useLatestReceipt,
+  useUploadReceipt,
+} from "../api/hooks";
 import DashboardCard from "./DashboardCard.tsx";
 import ReceiptReview from "./ReceiptReview.tsx";
 import { fmtIDR } from "./TransactionRow.tsx";
@@ -9,6 +13,11 @@ export default function ReceiptUpload() {
   const inputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadReceipt();
   const extract = useExtractReceipt();
+  const latest = useLatestReceipt();
+  // Post-delete flag: after deleting, show the upload/empty state even
+  // if an older NEEDS_REVIEW row exists. Cleared on new file activity;
+  // a browser refresh resets it, restoring latest-review persistence.
+  const [cleared, setCleared] = useState(false);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,6 +25,11 @@ export default function ReceiptUpload() {
     extract.reset();
     upload.mutate(file);
   };
+
+  // In-session upload wins; otherwise the server's latest NEEDS_REVIEW
+  // row is restored (survives refresh via query, never browser storage).
+  const sessionId = extract.isSuccess ? extract.data.id : null;
+  const reviewId = sessionId ?? (!cleared ? (latest.data?.receipt?.id ?? null) : null);
 
   return (
     <DashboardCard title="Upload Receipt" subtitle="Scan a receipt with AI">
@@ -27,6 +41,7 @@ export default function ReceiptUpload() {
           className="block w-full text-sm text-gray-600"
           onChange={(e) => {
             setFile(e.target.files?.[0] ?? null);
+            setCleared(false);
             upload.reset();
             extract.reset();
           }}
@@ -96,7 +111,25 @@ export default function ReceiptUpload() {
             </div>
           </dl>
         )}
-        {extract.isSuccess && <ReceiptReview receiptId={extract.data.id} />}
+        {latest.isError && (
+          <p className="text-sm text-red-600">
+            {(latest.error as Error).message}{" "}
+            <button className="underline" onClick={() => latest.refetch()}>
+              Retry
+            </button>
+          </p>
+        )}
+        {reviewId && (
+          <ReceiptReview
+            key={reviewId}
+            receiptId={reviewId}
+            onDeleted={() => {
+              setCleared(true);
+              upload.reset();
+              extract.reset();
+            }}
+          />
+        )}
       </form>
     </DashboardCard>
   );

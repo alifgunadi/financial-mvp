@@ -151,7 +151,8 @@ export interface Transaction {
   date: string;
   note: string | null;
   merchant: string | null;
-  category: Category;
+  // Null for statement-import rows confirmed without a category.
+  category: Category | null;
   createdAt: string;
 }
 
@@ -223,7 +224,8 @@ export interface SummaryPeriod {
 }
 
 export interface CategoryTotal {
-  categoryId: string;
+  // Null for the "Uncategorized" import group (see dashboard summary).
+  categoryId: string | null;
   name: string;
   total: number;
 }
@@ -299,11 +301,14 @@ export interface ReceiptExtraction {
 }
 
 export function useExtractReceipt() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (receiptId: string) =>
       api<ReceiptExtraction>(`/api/receipts/${receiptId}/extract`, {
         method: "POST",
       }),
+    // A fresh extraction is the newest NEEDS_REVIEW row: refresh latest.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["receipts", "latest"] }),
   });
 }
 
@@ -344,17 +349,59 @@ export function useReceipt(id: string | null) {
   });
 }
 
+// Save-and-confirm: PUT persists the review and, when the stored
+// review is complete, the backend also creates the Transaction and
+// flips the receipt to CONFIRMED in the same call.
+export interface UpdateReceiptResponse {
+  receipt: ReceiptDetail;
+  transaction: Transaction | null;
+}
+
 export function useUpdateReceipt(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ReviewInput) =>
-      api<ReceiptDetail>(`/api/receipts/${id}`, {
+      api<UpdateReceiptResponse>(`/api/receipts/${id}`, {
         method: "PUT",
         body: JSON.stringify(input),
       }),
-    // Review saves stay local to this receipt: no transactions or
-    // dashboard invalidation (no Transaction exists yet).
-    onSuccess: (data) => qc.setQueryData(["receipt", id], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["receipt", id], data.receipt);
+      // A transaction was created: same invalidation as manual creation.
+      // Partial saves stay local to this receipt.
+      if (data.transaction) {
+        qc.invalidateQueries({ queryKey: ["transactions"] });
+        qc.invalidateQueries({ queryKey: ["dashboard"] });
+      }
+    },
+  });
+}
+
+// Latest NEEDS_REVIEW receipt of the caller (at most one row). Null
+// means empty state: the user can upload a new receipt. The server is
+// the source of truth; no browser storage is involved.
+export interface LatestReceiptResponse {
+  receipt: ReceiptDetail | null;
+}
+
+export function useLatestReceipt() {
+  return useQuery({
+    queryKey: ["receipts", "latest"],
+    queryFn: () => api<LatestReceiptResponse>("/api/receipts/latest"),
+    retry: false,
+  });
+}
+
+export function useDeleteReceipt(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ ok: true }>(`/api/receipts/${id}`, { method: "DELETE" }),
+    // Only NEEDS_REVIEW rows are deletable (no Transaction exists yet),
+    // so transactions/dashboard stay untouched.
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: ["receipt", id] });
+      qc.invalidateQueries({ queryKey: ["receipts", "latest"] });
+    },
   });
 }
 
@@ -449,7 +496,8 @@ export interface ImportPreview {
 
 export interface ConfirmImportInput {
   fingerprint: string;
-  categoryId: string;
+  // Null = import without a category. Manual creation still requires one.
+  categoryId: string | null;
 }
 
 export interface ConfirmImportResponse {

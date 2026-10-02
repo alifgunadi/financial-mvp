@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   useCategories,
+  useDeleteReceipt,
   useReceipt,
   useUpdateReceipt,
   type ReceiptDetail,
@@ -20,7 +21,13 @@ function aiStr(v: string | null | undefined): string {
   return v === null || v === undefined || v === "" ? "—" : v;
 }
 
-function ReviewForm({ detail }: { detail: ReceiptDetail }) {
+function ReviewForm({
+  detail,
+  onConfirmed,
+}: {
+  detail: ReceiptDetail;
+  onConfirmed?: () => void;
+}) {
   const [merchant, setMerchant] = useState(detail.extraction.merchant ?? "");
   const [amount, setAmount] = useState(
     detail.extraction.amount === null ? "" : String(detail.extraction.amount),
@@ -57,13 +64,22 @@ function ReviewForm({ detail }: { detail: ReceiptDetail }) {
       }
       parsedAmount = n;
     }
-    save.mutate({
-      amount: parsedAmount,
-      date: date === "" ? null : date,
-      merchant: merchant.trim() === "" ? null : merchant.trim(),
-      type: type === "" ? null : type,
-      categoryId: categoryId === "" ? null : categoryId,
-    });
+    save.mutate(
+      {
+        amount: parsedAmount,
+        date: date === "" ? null : date,
+        merchant: merchant.trim() === "" ? null : merchant.trim(),
+        type: type === "" ? null : type,
+        categoryId: categoryId === "" ? null : categoryId,
+      },
+      {
+        // Save-and-confirm: the backend creates the Transaction when the
+        // stored review is complete and reports it in the response.
+        onSuccess: (data) => {
+          if (data.transaction) onConfirmed?.();
+        },
+      },
+    );
   };
 
   return (
@@ -122,8 +138,22 @@ function ReviewForm({ detail }: { detail: ReceiptDetail }) {
             className={inputCls}
             value={type}
             onChange={(e) => {
-              setType(e.target.value as TransactionType | "");
-              setCategoryId("");
+              const next = e.target.value as TransactionType | "";
+              setType(next);
+              // Preserve a still-compatible selection: only clear the
+              // chosen category when it no longer fits the new type.
+              // Unconditional reset silently wiped valid selections,
+              // which then saved as null and kept Confirm disabled.
+              setCategoryId((prev) => {
+                if (prev === "") return prev;
+                const kept = (categories ?? []).find((c) => c.id === prev);
+                if (
+                  kept &&
+                  (next === "" || kept.type === next || kept.type === "both")
+                )
+                  return prev;
+                return "";
+              });
             }}
           >
             <option value="">Unset</option>
@@ -171,8 +201,21 @@ function ReviewForm({ detail }: { detail: ReceiptDetail }) {
   );
 }
 
-export default function ReceiptReview({ receiptId }: { receiptId: string }) {
+export default function ReceiptReview({
+  receiptId,
+  onDeleted,
+}: {
+  receiptId: string;
+  onDeleted?: () => void;
+}) {
   const { data, isPending, isError, error, refetch } = useReceipt(receiptId);
+  const remove = useDeleteReceipt(receiptId);
+  // Set once when a save also creates the Transaction (see onConfirmed).
+  // The component is keyed per receipt, so no reset is needed.
+  const [confirmed, setConfirmed] = useState(false);
+  // Inline two-step delete (no modal system exists in this app): Delete
+  // arms the confirmation, Confirm delete fires once (disabled pending).
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
     <div className="mt-3 rounded border border-gray-200 p-3">
@@ -192,7 +235,7 @@ export default function ReceiptReview({ receiptId }: { receiptId: string }) {
           </button>
         </p>
       )}
-      {data && data.status !== "needs_review" && (
+      {data && data.status !== "needs_review" && !confirmed && (
         <p className="mt-2 text-sm text-gray-600">
           This receipt is not ready for review.
         </p>
@@ -200,7 +243,58 @@ export default function ReceiptReview({ receiptId }: { receiptId: string }) {
       {/* Mount once per extraction: reviewed values persist server-side,
           the form keeps the user's in-progress edits. */}
       {data && data.status === "needs_review" && (
-        <ReviewForm key={data.extractedAt ?? data.id} detail={data} />
+        <ReviewForm
+          key={data.extractedAt ?? data.id}
+          detail={data}
+          onConfirmed={() => setConfirmed(true)}
+        />
+      )}
+      {data && data.status === "needs_review" && (
+        <div className="mt-3 border-t border-gray-200 pt-3">
+          <p className="text-xs text-gray-500">
+            Saving a complete review creates the transaction.
+          </p>
+          {!confirmingDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="mt-2 w-full rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          ) : (
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                disabled={remove.isPending}
+                onClick={() =>
+                  remove.mutate(undefined, { onSuccess: () => onDeleted?.() })
+                }
+                className="flex-1 rounded bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {remove.isPending ? "Deleting…" : "Confirm delete"}
+              </button>
+              <button
+                type="button"
+                disabled={remove.isPending}
+                onClick={() => setConfirmingDelete(false)}
+                className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {remove.isError && (
+            <p className="mt-2 text-sm text-red-600">
+              {(remove.error as Error).message}
+            </p>
+          )}
+        </div>
+      )}
+      {confirmed && (
+        <p className="mt-2 text-sm text-green-700">
+          Transaction created successfully.
+        </p>
       )}
     </div>
   );

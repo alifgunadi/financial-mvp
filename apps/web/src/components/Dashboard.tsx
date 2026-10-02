@@ -283,7 +283,9 @@ export default function Dashboard() {
 
       {/* Statement import — full width so candidate review stays readable */}
       <div id="imports" className="mt-6 scroll-mt-24">
-        <StatementImport />
+        <StatementImport
+          onViewPeriod={(from, to) => setPeriod({ from, to })}
+        />
       </div>
 
       {/* Row 5: operations — history log + action sidebar */}

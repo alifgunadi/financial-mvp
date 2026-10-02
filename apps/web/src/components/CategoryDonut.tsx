@@ -52,7 +52,7 @@ export default function CategoryDonut({
           />
           {segments.map((s) => (
             <circle
-              key={s.categoryId}
+              key={s.categoryId ?? "uncategorized"}
               cx="70"
               cy="70"
               r={R}
@@ -84,7 +84,10 @@ export default function CategoryDonut({
         </svg>
         <ul className="min-w-0 flex-1 space-y-2.5 self-stretch">
           {segments.map((s) => (
-            <li key={s.categoryId} className="flex items-center gap-2.5 text-sm">
+            <li
+              key={s.categoryId ?? "uncategorized"}
+              className="flex items-center gap-2.5 text-sm"
+            >
               <span
                 aria-hidden="true"
                 className="h-2.5 w-2.5 shrink-0 rounded-[4px]"
