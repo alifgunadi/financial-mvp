@@ -82,6 +82,20 @@ export const createImportSchema = z.object({
     .optional(),
 });
 
+// Statement import confirm: manual category assignment per READY candidate.
+// Keyed by deterministic fingerprint (rowIndex is per-pocket, not unique).
+// Exact-set matching against the parser output is enforced in the handler.
+export const confirmImportSchema = z.object({
+  candidates: z.array(
+    z.object({
+      fingerprint: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/, "fingerprint must be sha256 hex"),
+      categoryId: z.string().uuid("categoryId must be a uuid"),
+    }),
+  ),
+});
+
 export const authSchema = z.object({  email: z
     .string()
     .trim()

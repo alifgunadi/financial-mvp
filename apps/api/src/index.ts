@@ -14,6 +14,12 @@ import {
   saveReceiptFile,
 } from "./receiptStore.js";
 import { AiError, extractReceipt } from "./ai.js";
+import { BluError, parseBluPdf } from "./statements/bluParse.js";
+import { PdfExtractError } from "./statements/pdfExtract.js";
+import {
+  summarizeCandidates,
+  toImportCandidates,
+} from "./statements/bluSemantic.js";
 import { logError, logInfo, prismaCause, requestContext, sendError } from "./logger.js";
 import {
   createSession,
@@ -25,6 +31,7 @@ import {
 } from "./auth.js";
 import {
   authSchema,
+  confirmImportSchema,
   createCategorySchema,
   createImportSchema,
   createTransactionSchema,
@@ -1180,6 +1187,293 @@ app.get("/api/imports/:id", requireAuth, async (req, res) => {
       operation: "get_import",
     });
   res.json(toApiImport(batch));
+});
+
+app.get("/api/imports/:id/preview", requireAuth, async (req, res) => {
+  const parsed = z.object({ id: z.string().uuid() }).safeParse(req.params);
+  if (!parsed.success) return badRequest(res, req, parsed.error, "preview_import");
+  if (!req.user) return unauthorized(res, req);
+  // Scoped lookup: another user's import reads as not found (no leak).
+  const batch = await db.importBatch
+    .findFirst({ where: { id: parsed.data.id, userId: req.user.id } })
+    .catch(() => null);
+  if (!batch)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "import not found",
+      operation: "preview_import",
+    });
+  // basename: the stored path is never trusted as absolute or traversed.
+  const pdf = await readFile(receiptFilePath(basename(batch.filePath))).catch(
+    () => null,
+  );
+  if (!pdf)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "stored file missing",
+      operation: "preview_import",
+    });
+  try {
+    // Read-only: parse and classify only. No Transaction is created, the
+    // batch is untouched, and no extraction quota is consumed (Gemini-free).
+    const statement = await parseBluPdf(pdf);
+    const candidates = toImportCandidates(statement);
+    const summary = summarizeCandidates(candidates);
+    res.json({
+      batch: toApiImport(batch),
+      bank: "blu",
+      detected: statement.detected,
+      statementPeriod: statement.statementPeriod,
+      pockets: statement.pockets.map((p) => ({
+        pocket: p.pocket,
+        openingMinor: p.openingMinor === null ? null : Number(p.openingMinor),
+        totalIncomeMinor: Number(p.totalIncomeMinor),
+        totalExpenseMinor: Number(p.totalExpenseMinor),
+        closingMinor: p.closingMinor === null ? null : Number(p.closingMinor),
+        rowCount: p.rows.length,
+        reconciled: p.reconciled,
+        importable: p.importable,
+        diagnostics: p.diagnostics,
+      })),
+      globalReconciled: statement.globalReconciled,
+      importable: statement.importable,
+      diagnostics: statement.diagnostics,
+      summary: {
+        ...summary,
+        readyIncome: Number(summary.readyIncome),
+        readyExpense: Number(summary.readyExpense),
+      },
+      candidates: candidates.map((c) => ({
+        type: toApi(c.type),
+        amount: Number(c.amount),
+        date: c.date,
+        merchant: c.merchant,
+        note: c.note,
+        reference: c.reference,
+        fingerprint: c.fingerprint,
+        disposition: toApi(c.disposition),
+        pocket: c.pocket,
+        rowIndex: c.rowIndex,
+      })),
+    });
+  } catch (e) {
+    if (e instanceof BluError)
+      return sendError(res, req, {
+        status: e.status,
+        code: "VALIDATION_ERROR",
+        message: e.message,
+        operation: "preview_import",
+      });
+    if (e instanceof PdfExtractError)
+      return sendError(res, req, {
+        status: 400,
+        code: "FILE_ERROR",
+        message: e.message,
+        operation: "preview_import",
+      });
+    sendError(res, req, {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "failed to preview import",
+      operation: "preview_import",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
+});
+
+// Internal signal: the atomic batch claim inside the confirm transaction
+// found no confirmable row (lost a race with a concurrent confirm).
+class ConfirmConflictError extends Error {}
+
+app.post("/api/imports/:id/confirm", requireAuth, async (req, res) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+  if (!params.success) return badRequest(res, req, params.error, "confirm_import");
+  const body = confirmImportSchema.safeParse(req.body);
+  if (!body.success) return badRequest(res, req, body.error, "confirm_import");
+  if (!req.user) return unauthorized(res, req);
+  const userId = req.user.id;
+  // Scoped lookup: another user's import reads as not found (no leak).
+  const batch = await db.importBatch
+    .findFirst({ where: { id: params.data.id, userId } })
+    .catch(() => null);
+  if (!batch)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "import not found",
+      operation: "confirm_import",
+    });
+  // Only unprocessed batches can be confirmed. There is no CONFIRMED value
+  // in ImportStatus; the terminal state is IMPORTED.
+  if (batch.status !== "UPLOADED" && batch.status !== "NEEDS_REVIEW")
+    return sendError(res, req, {
+      status: 409,
+      code: "CONFLICT_ERROR",
+      message:
+        batch.status === "IMPORTED"
+          ? "import already confirmed"
+          : "import cannot be confirmed",
+      operation: "confirm_import",
+    });
+  // Same source of truth as preview: deterministic re-parse of the stored
+  // PDF. No second parser, no persisted candidate representation.
+  const pdf = await readFile(receiptFilePath(basename(batch.filePath))).catch(
+    () => null,
+  );
+  if (!pdf)
+    return sendError(res, req, {
+      status: 404,
+      code: "NOT_FOUND_ERROR",
+      message: "stored file missing",
+      operation: "confirm_import",
+    });
+  let candidates: Awaited<ReturnType<typeof toImportCandidates>>;
+  try {
+    candidates = toImportCandidates(await parseBluPdf(pdf));
+  } catch (e) {
+    if (e instanceof BluError)
+      return sendError(res, req, {
+        status: e.status,
+        code: "VALIDATION_ERROR",
+        message: e.message,
+        operation: "confirm_import",
+      });
+    if (e instanceof PdfExtractError)
+      return sendError(res, req, {
+        status: 400,
+        code: "FILE_ERROR",
+        message: e.message,
+        operation: "confirm_import",
+      });
+    return sendError(res, req, {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "failed to confirm import",
+      operation: "confirm_import",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
+  // Identity is the fingerprint: rowIndex restarts per pocket (bluParse)
+  // and is not unique across candidates. Every READY candidate needs
+  // exactly one assignment; non-READY rows are never writable.
+  const ready = candidates.filter((c) => c.disposition === "READY");
+  const readyByFingerprint = new Map(ready.map((c) => [c.fingerprint, c]));
+  const seen = new Set<string>();
+  for (const a of body.data.candidates) {
+    if (seen.has(a.fingerprint))
+      return sendError(res, req, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: "duplicate candidate assignment",
+        operation: "confirm_import",
+      });
+    seen.add(a.fingerprint);
+    if (!readyByFingerprint.has(a.fingerprint)) {
+      const known = candidates.some((c) => c.fingerprint === a.fingerprint);
+      return sendError(res, req, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: known
+          ? "candidate is not importable"
+          : "unknown candidate fingerprint",
+        operation: "confirm_import",
+      });
+    }
+  }
+  if (seen.size !== ready.length)
+    return sendError(res, req, {
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "all importable candidates require a category",
+      operation: "confirm_import",
+    });
+  // Category ownership, bulk-checked before any write. Same "not found"
+  // message as manual transaction creation: no existence leak.
+  const categoryIds = [...new Set(body.data.candidates.map((a) => a.categoryId))];
+  const owned =
+    categoryIds.length === 0
+      ? []
+      : await db.category
+        .findMany({
+          where: { id: { in: categoryIds }, userId },
+          select: { id: true },
+        })
+        .catch(() => null);
+  if (!owned || owned.length !== categoryIds.length)
+    return sendError(res, req, {
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "category not found",
+      operation: "confirm_import",
+    });
+  const categoryByFingerprint = new Map(
+    body.data.candidates.map((a) => [a.fingerprint, a.categoryId] as const),
+  );
+  try {
+    const updated = await db.$transaction(async (tx) => {
+      // Atomic claim: the conditional update holds the row lock, so a
+      // concurrent confirm blocks here, then finds no confirmable row
+      // after the first commits and gets a 409. Crash before commit
+      // rolls the claim back, leaving the batch confirmable for retry.
+      const claimed = await tx.importBatch.updateMany({
+        where: {
+          id: batch.id,
+          userId,
+          status: { in: ["UPLOADED", "NEEDS_REVIEW"] },
+        },
+        data: { status: "PROCESSING" },
+      });
+      if (claimed.count === 0) throw new ConfirmConflictError();
+      // Candidate type literals are identical to the Transaction enum;
+      // amount is whole IDR; merchant stays null (parser reserves it).
+      // The parser reference has no Transaction column and is not stored.
+      // Guarded: createMany with zero rows is driver-dependent.
+      if (ready.length > 0)
+        await tx.transaction.createMany({
+          data: ready.map((c) => ({
+            type: c.type,
+            amount: c.amount,
+            date: new Date(`${c.date}T00:00:00Z`),
+            note: c.note,
+            merchant: c.merchant,
+            source: "IMPORT" as const,
+            userId,
+            categoryId: categoryByFingerprint.get(c.fingerprint) as string,
+            importBatchId: batch.id,
+            importFingerprint: c.fingerprint,
+          })),
+        });
+      return tx.importBatch.update({
+        where: { id: batch.id },
+        data: { status: "IMPORTED" },
+      });
+    });
+    res.json({
+      batch: toApiImport(updated),
+      created: ready.length,
+      skipped: candidates.length - ready.length,
+    });
+  } catch (e) {
+    if (e instanceof ConfirmConflictError)
+      return sendError(res, req, {
+        status: 409,
+        code: "CONFLICT_ERROR",
+        message: "import already confirmed",
+        operation: "confirm_import",
+      });
+    sendError(res, req, {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "failed to confirm import",
+      operation: "confirm_import",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
 });
 
 app.get("/api/health", (_req, res) => {
