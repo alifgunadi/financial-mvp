@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/statements/bluSemantic.test.ts",
     "start": "node dist/index.js",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",

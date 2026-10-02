@@ -14,5 +14,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Test files run via node --import tsx --test (npm test); they must
+  // not be emitted into dist by the Vercel/production build.
+  "exclude": ["src/**/*.test.ts"]
 }
