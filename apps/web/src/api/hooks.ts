@@ -18,6 +18,11 @@ export function useMe() {
     queryKey: ["me"],
     queryFn: () => api<AuthUser>("/api/auth/me"),
     retry: false,
+    // Logged-out state must be stable without network: after the logout
+    // reset below, no background refetch (mount/focus/reconnect) may revive
+    // the query. Login/register still refetch explicitly via invalidation,
+    // which always bypasses staleTime.
+    staleTime: Infinity,
   });
 }
 
@@ -57,9 +62,17 @@ export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
-    onSuccess: () => {
+    // Token is sent with the request, so cleanup must run even when the
+    // request fails: an aborted/failed logout still ends the local session.
+    // Reset ["me"] synchronously so the login screen renders immediately
+    // (App gates on it) instead of waiting for the post-logout refetch.
+    // Cancel that refetch too: with no token it can only 401 or hang, and
+    // the reset state below is already the correct unauthenticated state.
+    onSettled: () => {
       setSessionToken(null);
       qc.clear();
+      qc.setQueryData(["me"], undefined);
+      void qc.cancelQueries({ queryKey: ["me"] });
     },
   });
 }
