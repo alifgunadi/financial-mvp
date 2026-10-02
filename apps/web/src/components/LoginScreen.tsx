@@ -2,8 +2,14 @@ import { useState } from "react";
 import { useLogin } from "../api/hooks";
 import { authInputCls } from "./RegisterScreen.tsx";
 
-export default function LoginScreen({ onRegister }: { onRegister: () => void }) {
-  const [email, setEmail] = useState("");
+export default function LoginScreen({
+  initialEmail = "",
+  onRegister,
+}: {
+  initialEmail?: string;
+  onRegister: () => void;
+}) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const login = useLogin();
 

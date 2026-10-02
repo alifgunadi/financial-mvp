@@ -10,10 +10,6 @@ import { sendError } from "./logger.js";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// Locked business rule: the only account eligible for SUPERADMIN.
-// Compared case-insensitively after the existing lowercase normalization.
-export const SUPERADMIN_EMAIL = "alifgunadi1303@gmail.com";
-
 export type UserRole = "CLIENT" | "SUPERADMIN";
 
 export interface AuthUser {
@@ -23,11 +19,18 @@ export interface AuthUser {
 }
 
 // Pure role decision (unit-testable). Never reads role from the client.
+// superadminEmail comes from env (SUPERADMIN_EMAIL); undefined means
+// fail-closed: nobody can become SUPERADMIN.
 export function resolveRole(
   normalizedEmail: string,
+  superadminEmail: string | undefined,
   superadminExists: boolean,
 ): UserRole {
-  if (normalizedEmail === SUPERADMIN_EMAIL && !superadminExists)
+  if (
+    superadminEmail !== undefined &&
+    normalizedEmail === superadminEmail &&
+    !superadminExists
+  )
     return "SUPERADMIN";
   return "CLIENT";
 }

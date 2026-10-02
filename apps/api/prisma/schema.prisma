@@ -62,6 +62,7 @@ model User {
   transactions  Transaction[]
   receipts      Receipt[]
   importBatches ImportBatch[]
+  extractionAttempts ExtractionAttempt[]
 }
 
 model Session {
@@ -139,6 +140,19 @@ model Receipt {
   error               String?
   transaction         Transaction?     @relation("ReceiptTransaction")
   createdAt           DateTime         @default(now())
+}
+
+// One row per receipt-extraction attempt, written BEFORE the Gemini call
+// so re-extracting the same receipt still counts against the per-user
+// quota. Rows older than the quota window are pruned opportunistically
+// by the extract handler; user deletion cascades.
+model ExtractionAttempt {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // One uploaded bank-statement PDF. Identity is (userId, fileHash): the same

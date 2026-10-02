@@ -4,7 +4,13 @@ import { useRegister } from "../api/hooks";
 export const authInputCls =
   "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
 
-export default function RegisterScreen({ onLogin }: { onLogin: () => void }) {
+export default function RegisterScreen({
+  onRegistered,
+  onLogin,
+}: {
+  onRegistered: (email: string) => void;
+  onLogin: () => void;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -18,7 +24,12 @@ export default function RegisterScreen({ onLogin }: { onLogin: () => void }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password || mismatch) return;
-    register.mutate({ email: email.trim(), password });
+    // Success hands the (server-normalized) email up; AuthScreen switches
+    // to login. Only the email crosses over, never the password.
+    register.mutate(
+      { email: email.trim(), password },
+      { onSuccess: (user) => onRegistered(user.email) },
+    );
   };
 
   const switchMode = () => {

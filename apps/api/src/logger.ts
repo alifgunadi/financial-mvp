@@ -17,7 +17,8 @@ export type ErrorCode =
   | "FILE_ERROR"
   | "AI_ERROR"
   | "NETWORK_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "RATE_LIMIT_ERROR";
 
 declare global {
   namespace Express {

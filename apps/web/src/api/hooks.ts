@@ -1,5 +1,18 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiUpload, setSessionToken } from "./client";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type Query,
+  type QueryClient,
+} from "@tanstack/react-query";
+import {
+  ApiError,
+  api,
+  apiUpload,
+  getAuthEpoch,
+  hasSessionToken,
+  setSessionToken,
+} from "./client";
 
 export interface AuthUser {
   id: string;
@@ -14,31 +27,80 @@ export interface AuthSession extends AuthUser {
 }
 
 export function useMe() {
-  return useQuery({
+  return useQuery<AuthUser | null>({
     queryKey: ["me"],
-    queryFn: () => api<AuthUser>("/api/auth/me"),
+    // No token in memory means logged out: resolve unauthenticated without
+    // a network call (a fetch could only 401). App gates on !data.
+    queryFn: async () => {
+      if (!hasSessionToken()) return null;
+      return api<AuthUser>("/api/auth/me");
+    },
     retry: false,
     // Logged-out state must be stable without network: after the logout
     // reset below, no background refetch (mount/focus/reconnect) may revive
     // the query. Login/register still refetch explicitly via invalidation,
-    // which always bypasses staleTime.
+    // which always bypasses staleTime. A kept /me error (Phase 3 notice)
+    // must not refetch on its own either; only a new login/register does.
     staleTime: Infinity,
+    retryOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
+// Local-only auth reset (no server call: the server session is already
+// invalid when this runs). Shared by logout and the global 401 handler.
+// Order matters: cancelQueries MUST come first — its sync revert dispatch
+// in onCancel would overwrite the null below if the order were reversed.
+export function resetAuthState(qc: QueryClient): void {
+  setSessionToken(null);
+  void qc.cancelQueries({ queryKey: ["me"] });
+  qc.setQueryData(["me"], null);
+  qc.removeQueries({ predicate: (query) => query.queryKey[0] !== "me" });
+}
+
+// Global 401 handler for the QueryCache/MutationCache onError hooks.
+// Resets only when the failing request belongs to the current session:
+// no token (e.g. wrong password on /login) or a stale epoch (a previous
+// session's in-flight request) never triggers a reset. Idempotent: the
+// first reset bumps the epoch, so parallel 401s cannot reset twice.
+export function handleAuthError(qc: QueryClient, error: unknown): void {
+  if (!(error instanceof ApiError) || error.status !== 401) return;
+  if (!hasSessionToken()) return;
+  if (error.authEpoch !== getAuthEpoch()) return;
+  resetAuthState(qc);
+}
+
+// QueryCache onError entry point. A non-401 /me failure while a token
+// exists (login/register succeeded but verification failed) keeps its
+// error state so AuthScreen can explain it; only the dangling token is
+// dropped. Everything else follows the silent 401 reset above.
+export function handleQueryError(
+  qc: QueryClient,
+  error: unknown,
+  query: Pick<Query, "queryKey">,
+): void {
+  if (
+    query.queryKey[0] === "me" &&
+    hasSessionToken() &&
+    !(error instanceof ApiError && error.status === 401)
+  ) {
+    setSessionToken(null);
+    return;
+  }
+  handleAuthError(qc, error);
+}
+
 export function useRegister() {
-  const qc = useQueryClient();
   return useMutation({
+    // Registration creates no session: the response is AuthUser only
+    // (no sessionToken). Callers handle success per call; nothing here
+    // touches the token, the epoch, or ["me"], so no /me request follows.
     mutationFn: (input: { email: string; password: string }) =>
-      api<AuthSession>("/api/auth/register", {
+      api<AuthUser>("/api/auth/register", {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    // Server is the source of truth: store the token, then re-verify via me.
-    onSuccess: (session) => {
-      setSessionToken(session.sessionToken);
-      qc.invalidateQueries({ queryKey: ["me"] });
-    },
   });
 }
 
@@ -64,15 +126,11 @@ export function useLogout() {
     mutationFn: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
     // Token is sent with the request, so cleanup must run even when the
     // request fails: an aborted/failed logout still ends the local session.
-    // Reset ["me"] synchronously so the login screen renders immediately
-    // (App gates on it) instead of waiting for the post-logout refetch.
-    // Cancel that refetch too: with no token it can only 401 or hang, and
-    // the reset state below is already the correct unauthenticated state.
+    // Shared reset (see resetAuthState): ["me"] becomes null (never
+    // undefined: setQueryData ignores undefined) so the mounted useMe
+    // observer is notified synchronously and App renders AuthScreen.
     onSettled: () => {
-      setSessionToken(null);
-      qc.clear();
-      qc.setQueryData(["me"], undefined);
-      void qc.cancelQueries({ queryKey: ["me"] });
+      resetAuthState(qc);
     },
   });
 }

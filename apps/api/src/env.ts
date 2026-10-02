@@ -14,6 +14,16 @@ const envSchema = z.object({
     .string()
     .min(1)
     .default("http://localhost:7364,http://127.0.0.1:7364"),
+  // The only email eligible for SUPERADMIN on first register. Optional:
+  // unset or empty means fail-closed (every register becomes CLIENT).
+  SUPERADMIN_EMAIL: z.preprocess(
+    (v) => {
+      if (typeof v !== "string") return undefined;
+      const normalized = v.trim().toLowerCase();
+      return normalized === "" ? undefined : normalized;
+    },
+    z.string().email().optional(),
+  ),
 });
 
 export const env = envSchema.parse(process.env);

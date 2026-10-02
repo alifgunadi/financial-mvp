@@ -6,13 +6,20 @@
 // no other SUPERADMIN may exist; refuses to run otherwise. Takes no
 // passwords, creates nothing, deletes nothing.
 import { z } from "zod";
-import { SUPERADMIN_EMAIL } from "../src/auth.js";
 import { db } from "../src/db.js";
+import { env } from "../src/env.js";
+
+const superadminEmail = env.SUPERADMIN_EMAIL;
+if (!superadminEmail) {
+  console.error("refused: SUPERADMIN_EMAIL is not set");
+  await db.$disconnect();
+  process.exit(1);
+}
 
 const email = z.string().trim().toLowerCase().email().parse(process.argv[2]);
 
-if (email !== SUPERADMIN_EMAIL) {
-  console.error(`refused: only ${SUPERADMIN_EMAIL} is eligible for SUPERADMIN`);
+if (email !== superadminEmail) {
+  console.error(`refused: only ${superadminEmail} is eligible for SUPERADMIN`);
   await db.$disconnect();
   process.exit(1);
 }

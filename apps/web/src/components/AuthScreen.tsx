@@ -1,18 +1,60 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "../api/client";
+import { useMe } from "../api/hooks";
 import LoginScreen from "./LoginScreen.tsx";
 import RegisterScreen from "./RegisterScreen.tsx";
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<"login" | "register">("login");
+  // Set only right after a successful registration; carries the new email
+  // to the login form exactly once (manual mode switches clear it).
+  const [successEmail, setSuccessEmail] = useState<string | null>(null);
+  const me = useMe();
+  const qc = useQueryClient();
+  const meError = me.isError ? me.error : null;
+  // /me failed after login/register (token already dropped): explain it
+  // with the existing error style. A 401 is just an ended session, silent.
+  const notice =
+    meError && !(meError instanceof ApiError && meError.status === 401)
+      ? meError.message
+      : null;
+  // A new attempt starts clean: drop stale failures and the one-shot
+  // registration notice while typing or on resubmit.
+  const clearNotices = () => {
+    if (me.isError) qc.setQueryData(["me"], null);
+    setSuccessEmail(null);
+  };
+  const toRegister = () => {
+    setSuccessEmail(null);
+    setMode("register");
+  };
+  const toLogin = () => {
+    setSuccessEmail(null);
+    setMode("login");
+  };
+  const handleRegistered = (email: string) => {
+    setSuccessEmail(email);
+    setMode("login");
+  };
 
   return (
     <main className="mx-auto max-w-sm p-4 sm:p-6">
       <h1 className="text-xl font-semibold">Financial MVP</h1>
-      <div className="mt-4">
+      {notice && <p className="mt-3 text-sm text-red-600">{notice}</p>}
+      {mode === "login" && successEmail !== null && (
+        <p className="mt-3 text-sm text-green-600">
+          Account created. Please login.
+        </p>
+      )}
+      <div className="mt-4" onChange={clearNotices} onSubmit={clearNotices}>
         {mode === "login" ? (
-          <LoginScreen onRegister={() => setMode("register")} />
+          <LoginScreen
+            initialEmail={successEmail ?? ""}
+            onRegister={toRegister}
+          />
         ) : (
-          <RegisterScreen onLogin={() => setMode("login")} />
+          <RegisterScreen onRegistered={handleRegistered} onLogin={toLogin} />
         )}
       </div>
     </main>

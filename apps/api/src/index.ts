@@ -183,7 +183,7 @@ app.post("/api/auth/register", async (req, res) => {
       where: { role: "SUPERADMIN" },
       select: { id: true },
     });
-    const role = resolveRole(parsed.data.email, existingSuperadmin !== null);
+    const role = resolveRole(parsed.data.email, env.SUPERADMIN_EMAIL, existingSuperadmin !== null);
     const user = await db.user.create({
       data: {
         email: parsed.data.email,
@@ -191,9 +191,10 @@ app.post("/api/auth/register", async (req, res) => {
         role,
       },
     });
-    const sessionToken = await createSession({ id: user.id, email: user.email, role });
+    // No session here: registration never authenticates. The user logs in
+    // separately, which is the only place a session is created.
     logInfo({ req, operation: "register_user", message: `user registered id=${user.id}` });
-    res.status(201).json({ id: user.id, email: user.email, role, sessionToken });
+    res.status(201).json({ id: user.id, email: user.email, role });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
       return sendError(res, req, {
@@ -569,6 +570,13 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
 // Max 5MB: receipts are phone photos, larger files are rejected outright.
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 
+// Extraction quota: max attempts per user per rolling window. Counted via
+// ExtractionAttempt rows (one per call, created before the Gemini call),
+// so re-extracting the same receipt still counts. Plain constants (not
+// env): tuning them is a code change, like the other receipt caps here.
+const EXTRACT_QUOTA_MAX = 20;
+const EXTRACT_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 const RECEIPT_TYPES: Record<string, { exts: string[]; ext: string }> = {
   "image/jpeg": { exts: [".jpg", ".jpeg"], ext: ".jpg" },
   "image/png": { exts: [".png"], ext: ".png" },
@@ -730,6 +738,63 @@ app.post("/api/receipts/:id/extract", requireAuth, async (req, res) => {
       message: "AI provider unavailable",
       operation: "receipt_extract",
     });
+  // Quota: one ExtractionAttempt row per call, created BEFORE the Gemini
+  // call so re-extracting the same receipt still counts. Requests already
+  // known to fail (unknown id, CONFIRMED, no API key) never reach here.
+  // try/catch (not .catch): also covers a stale Prisma client where the
+  // delegate itself is missing. Refuse closed on failure: an unrecorded
+  // attempt must not become a free Gemini call.
+  const windowStart = new Date(Date.now() - EXTRACT_QUOTA_WINDOW_MS);
+  try {
+    await db.extractionAttempt.create({ data: { userId: req.user.id } });
+  } catch (e) {
+    return sendError(res, req, {
+      status: 503,
+      code: "DATABASE_ERROR",
+      message: "extraction quota unavailable",
+      operation: "receipt_extract",
+      causeCode: prismaCause(e),
+      err: e,
+    });
+  }
+  const attempts = await db.extractionAttempt
+    .count({ where: { userId: req.user.id, createdAt: { gte: windowStart } } })
+    .catch(() => 0);
+  if (attempts > EXTRACT_QUOTA_MAX) {
+    // Oldest in-window attempt decides when a slot frees up; second query
+    // only on the reject path. Without DB proof, fall back to the window.
+    const oldest = await db.extractionAttempt
+      .findFirst({
+        where: { userId: req.user.id, createdAt: { gte: windowStart } },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      })
+      .catch(() => null);
+    const retryAfter =
+      oldest?.createdAt == null
+        ? EXTRACT_QUOTA_WINDOW_MS / 1000
+        : Math.min(
+          EXTRACT_QUOTA_WINDOW_MS / 1000,
+          Math.max(
+            1,
+            Math.ceil(
+              (oldest.createdAt.getTime() + EXTRACT_QUOTA_WINDOW_MS - Date.now()) / 1000,
+            ),
+          ),
+        );
+    res.setHeader("Retry-After", String(retryAfter));
+    return sendError(res, req, {
+      status: 429,
+      code: "RATE_LIMIT_ERROR",
+      message: "extraction quota exceeded, try again later",
+      operation: "receipt_extract",
+    });
+  }
+  // Opportunistic janitor: drop attempts already outside every window.
+  // Fire-and-forget; a failed cleanup only leaves rows for the next call.
+  void db.extractionAttempt
+    .deleteMany({ where: { createdAt: { lt: windowStart } } })
+    .catch(() => { });
   // basename: the stored path is never trusted as absolute or traversed.
   const image = await readFile(receiptFilePath(basename(receipt.filePath))).catch(
     () => null,
