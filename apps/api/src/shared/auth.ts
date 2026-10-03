@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type express from "express";
-import { db } from "./db.js";
-import { sendError } from "./logger.js";
+import { db } from "../infra/db.js";
+import { sendError } from "../infra/logger.js";
 
 // Session auth boundary: the raw token is returned to the caller once
 // (register/login response) and never stored server-side. The DB keeps

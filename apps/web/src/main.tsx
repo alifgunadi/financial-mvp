@@ -11,8 +11,7 @@ import { ApiError } from "./api/client";
 import { handleAuthError, handleQueryError } from "./api/hooks";
 import "./index.css";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
+const queryClient: QueryClient = new QueryClient({  defaultOptions: {
     queries: {
       // A 4xx is a final answer, never retry it. Anything else keeps the
       // library default (up to 3 retries with backoff). Mutations untouched.

@@ -349,9 +349,8 @@ export function useReceipt(id: string | null) {
   });
 }
 
-// Save-and-confirm: PUT persists the review and, when the stored
-// review is complete, the backend also creates the Transaction and
-// flips the receipt to CONFIRMED in the same call.
+// Save-only: PUT persists the review fields and always returns
+// transaction: null. Creating the Transaction is POST /confirm only.
 export interface UpdateReceiptResponse {
   receipt: ReceiptDetail;
   transaction: Transaction | null;
@@ -367,12 +366,42 @@ export function useUpdateReceipt(id: string) {
       }),
     onSuccess: (data) => {
       qc.setQueryData(["receipt", id], data.receipt);
-      // A transaction was created: same invalidation as manual creation.
-      // Partial saves stay local to this receipt.
-      if (data.transaction) {
-        qc.invalidateQueries({ queryKey: ["transactions"] });
-        qc.invalidateQueries({ queryKey: ["dashboard"] });
-      }
+    },
+  });
+}
+
+// Explicit confirmation: POST carries the full review in the body and
+// creates exactly one Transaction from it, flipping the receipt to
+// CONFIRMED. Response shape mirrors POST /api/receipts/:id/confirm
+// (transaction always present).
+export interface ConfirmReceiptInput {
+  amount: number;
+  date: string;
+  merchant?: string | null;
+  type: TransactionType;
+  categoryId: string;
+}
+
+export interface ConfirmReceiptResponse {
+  receipt: ReceiptDetail;
+  transaction: Transaction;
+}
+
+export function useConfirmReceipt(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConfirmReceiptInput) =>
+      api<ConfirmReceiptResponse>(`/api/receipts/${id}/confirm`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    // A transaction was created: same invalidation as manual creation,
+    // plus the latest-review lookup (the receipt is now CONFIRMED).
+    onSuccess: (data) => {
+      qc.setQueryData(["receipt", id], data.receipt);
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["receipts", "latest"] });
     },
   });
 }

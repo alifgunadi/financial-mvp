@@ -1,0 +1,15 @@
+{
+  // Typecheck-only config for one-off ops scripts + src (never emitted).
+  // The main tsconfig.json is untouched and remains the build config.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Main config pins rootDir to src; scripts/ lives beside it, so the
+    // root must widen here. No composite/declaration in the base config,
+    // so nothing else needs overriding. outDir is inert under noEmit.
+    "rootDir": "."
+  },
+  "include": ["scripts", "src"],
+  // Same test exclusion as the main config (tests run via tsx, not tsc).
+  "exclude": ["src/**/*.test.ts"]
+}

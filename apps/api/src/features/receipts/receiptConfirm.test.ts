@@ -2,7 +2,7 @@
 // The API runs as a child process (tsx) on a free port; it is killed in
 // after(). Test-scoped fixtures only (example.invalid); rows are deleted
 // in after(), scoped to the test user ids (net-zero).
-// Run: node --import tsx --test src/receiptConfirm.test.ts
+// Run: node --import tsx --test src/features/receipts/receiptConfirm.test.ts
 // Requires DATABASE_URL (uses the configured database, then cleans up).
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -11,9 +11,9 @@ import { existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashPassword } from "./auth.js";
-import { db } from "./db.js";
-import { receiptFilePath, saveReceiptFile } from "./receiptStore.js";
+import { hashPassword } from "../../shared/auth.js";
+import { db } from "../../infra/db.js";
+import { receiptFilePath, saveReceiptFile } from "../../receiptStore.js";
 
 const API_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -138,7 +138,7 @@ before(async () => {
     process.execPath,
     ["--import", "tsx", "src/index.ts"],
     {
-      cwd: path.join(API_DIR, ".."),
+      cwd: path.join(API_DIR, "..", ".."),
       env: { ...process.env, PORT: String(port) },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -171,70 +171,134 @@ after(async () => {
   }
 });
 
-describe("POST /api/receipts/:id/confirm", () => {
-  it("happy path: 201, RECEIPT transaction linked, receipt CONFIRMED", async () => {
+describe("POST /api/receipts/:id/confirm (full review in body)", () => {
+  // Complete payload (payload values differ from the stored review in
+  // the happy path, proving the payload is the source of truth).
+  function fullBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      amount: 75000,
+      date: "2026-10-03",
+      merchant: "PAYLOAD MERCHANT",
+      type: "expense",
+      categoryId: expCatA,
+      ...overrides,
+    };
+  }
+
+  it("happy path: 201, review stored from payload, RECEIPT transaction linked, receipt CONFIRMED", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
-    const receipt = await makeReceipt(user.id);
-    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const receipt = await makeReceipt(user.id, { categoryId: null });
+    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody());
     assert.equal(res.status, 201);
     const tx = res.json.transaction as Record<string, unknown>;
     assert.equal((tx.category as Record<string, unknown>).id, expCatA);
-    assert.equal(tx.merchant, "TEST MERCHANT");
+    assert.equal(tx.merchant, "PAYLOAD MERCHANT");
+    assert.equal(tx.amount, 75000);
+    assert.equal(tx.date, "2026-10-03");
     assert.equal(res.json.receipt && (res.json.receipt as Record<string, unknown>).status, "confirmed");
     const rows = await db.transaction.findMany({ where: { receiptId: receipt.id } });
     assert.equal(rows.length, 1);
     assert.equal(rows[0].source, "RECEIPT");
     assert.equal(rows[0].userId, user.id);
     assert.equal(rows[0].categoryId, expCatA);
-    assert.equal(rows[0].amount, 50000n);
+    assert.equal(rows[0].amount, 75000n);
     const updated = await db.receipt.findUniqueOrThrow({ where: { id: receipt.id } });
     assert.equal(updated.status, "CONFIRMED");
+    // Review fields persisted from the payload, not the stored review.
+    assert.equal(updated.extractedAmount, 75000n);
+    assert.equal(updated.extractedDate?.toISOString().slice(0, 10), "2026-10-03");
+    assert.equal(updated.extractedMerchant, "PAYLOAD MERCHANT");
+    assert.equal(updated.suggestedCategoryId, expCatA);
   });
 
-  it("incomplete review (each missing field) -> 400", async () => {
+  it("complete payload over incomplete stored review -> 201", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
-    const cases = [
-      await makeReceipt(user.id, { amount: null }),
-      await makeReceipt(user.id, { type: null }),
-      await makeReceipt(user.id, { date: null }),
-      await makeReceipt(user.id, { categoryId: null }),
+    const receipt = await makeReceipt(user.id, {
+      amount: null,
+      type: null,
+      date: null,
+      categoryId: null,
+    });
+    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody());
+    assert.equal(res.status, 201);
+    assert.equal(
+      (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+      1,
+    );
+    assert.equal((await db.receipt.findUniqueOrThrow({ where: { id: receipt.id } })).status, "CONFIRMED");
+  });
+
+  it("invalid payload -> 400, no transaction, stays NEEDS_REVIEW with stored review untouched", async () => {
+    const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
+    const bodies = [
+      {},
+      fullBody({ amount: 0 }),
+      fullBody({ amount: -5 }),
+      fullBody({ amount: 12.5 }),
+      fullBody({ date: "not-a-date" }),
+      fullBody({ date: "2026-13-40" }),
+      fullBody({ type: "bogus" }),
+      fullBody({ categoryId: null }),
+      fullBody({ categoryId: "not-a-uuid" }),
     ];
-    for (const receipt of cases) {
-      const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    for (const body of bodies) {
+      const receipt = await makeReceipt(user.id);
+      const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, body);
       assert.equal(res.status, 400);
-      assert.equal(res.json.error, "receipt review incomplete");
+      assert.equal(
+        (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+        0,
+      );
+      // Nothing was written: single-transaction rollback (here validation
+      // runs before any write, so the stored review is intact).
+      const fresh = await db.receipt.findUniqueOrThrow({ where: { id: receipt.id } });
+      assert.equal(fresh.status, "NEEDS_REVIEW");
+      assert.equal(fresh.extractedAmount, 50000n);
+      assert.equal(fresh.suggestedCategoryId, expCatA);
     }
   });
 
-  it("foreign category -> 400 category not found", async () => {
+  it("foreign category -> 400 category not found, stored review untouched", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
-    const receipt = await makeReceipt(user.id, { categoryId: expCatB });
-    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const receipt = await makeReceipt(user.id);
+    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody({ categoryId: expCatB }));
     assert.equal(res.status, 400);
     assert.equal(res.json.error, "category not found");
+    assert.equal(
+      (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+      0,
+    );
+    const fresh = await db.receipt.findUniqueOrThrow({ where: { id: receipt.id } });
+    assert.equal(fresh.status, "NEEDS_REVIEW");
+    assert.equal(fresh.suggestedCategoryId, expCatA);
   });
 
   it("type mismatch (expense + income category) -> 400", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
-    const receipt = await makeReceipt(user.id, { categoryId: incCatA });
-    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const receipt = await makeReceipt(user.id);
+    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody({ categoryId: incCatA }));
     assert.equal(res.status, 400);
     assert.equal(res.json.error, "category type mismatch");
+    assert.equal(
+      (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+      0,
+    );
+    assert.equal((await db.receipt.findUniqueOrThrow({ where: { id: receipt.id } })).status, "NEEDS_REVIEW");
   });
 
   it("other user's receipt -> 404", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
     const receipt = await makeReceipt(user.id);
-    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenB);
+    const res = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenB, fullBody({ categoryId: expCatB }));
     assert.equal(res.status, 404);
   });
 
   it("sequential double confirm -> 201 then 409, exactly one transaction", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
     const receipt = await makeReceipt(user.id);
-    const first = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const first = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody());
     assert.equal(first.status, 201);
-    const second = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const second = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody());
     assert.equal(second.status, 409);
     assert.equal(second.json.error, "receipt already confirmed");
     const rows = await db.transaction.findMany({ where: { receiptId: receipt.id } });
@@ -245,8 +309,8 @@ describe("POST /api/receipts/:id/confirm", () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
     const receipt = await makeReceipt(user.id);
     const [r1, r2] = await Promise.all([
-      api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA),
-      api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA),
+      api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody()),
+      api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, fullBody()),
     ]);
     assert.deepEqual([r1.status, r2.status].sort(), [201, 409]);
     const rows = await db.transaction.findMany({ where: { receiptId: receipt.id } });
@@ -262,17 +326,18 @@ describe("POST /api/receipts/:id/confirm", () => {
       "POST",
       "/api/receipts/00000000-0000-4000-8000-000000000000/confirm",
       tokenA,
+      fullBody(),
     );
     assert.equal(missing.status, 404);
   });
 });
 
-describe("PUT /api/receipts/:id (save-and-confirm)", () => {
+describe("PUT /api/receipts/:id (save-only)", () => {
   async function userA() {
     return db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
   }
 
-  it("complete save -> 200, transaction created, receipt CONFIRMED", async () => {
+  it("complete save -> 200, transaction null, stays NEEDS_REVIEW", async () => {
     const user = await userA();
     const receipt = await makeReceipt(user.id, { categoryId: null });
     const res = await api("PUT", `/api/receipts/${receipt.id}`, tokenA, {
@@ -283,12 +348,25 @@ describe("PUT /api/receipts/:id (save-and-confirm)", () => {
       categoryId: expCatA,
     });
     assert.equal(res.status, 200);
-    assert.equal((res.json.receipt as Record<string, unknown>).status, "confirmed");
-    assert.ok(res.json.transaction !== null);
-    const rows = await db.transaction.findMany({ where: { receiptId: receipt.id } });
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].source, "RECEIPT");
-    assert.equal(rows[0].categoryId, expCatA);
+    assert.equal((res.json.receipt as Record<string, unknown>).status, "needs_review");
+    assert.equal(res.json.transaction, null);
+    assert.equal(
+      (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+      0,
+    );
+    // The saved review is confirmable through POST /confirm only.
+    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, {
+      amount: 50000,
+      date: "2026-09-05",
+      merchant: "TEST MERCHANT",
+      type: "expense",
+      categoryId: expCatA,
+    });
+    assert.equal(confirmed.status, 201);
+    assert.equal(
+      (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
+      1,
+    );
   });
 
   it("incomplete save -> 200, transaction null, stays NEEDS_REVIEW", async () => {
@@ -306,7 +384,7 @@ describe("PUT /api/receipts/:id (save-and-confirm)", () => {
     );
   });
 
-  it("double complete save -> 200 then 409, exactly one transaction", async () => {
+  it("double complete save -> 200 twice, no transaction", async () => {
     const user = await userA();
     const receipt = await makeReceipt(user.id, { categoryId: null });
     const body = {
@@ -318,16 +396,17 @@ describe("PUT /api/receipts/:id (save-and-confirm)", () => {
     };
     const first = await api("PUT", `/api/receipts/${receipt.id}`, tokenA, body);
     assert.equal(first.status, 200);
-    assert.ok(first.json.transaction !== null);
+    assert.equal(first.json.transaction, null);
     const second = await api("PUT", `/api/receipts/${receipt.id}`, tokenA, body);
-    assert.equal(second.status, 409);
+    assert.equal(second.status, 200);
+    assert.equal(second.json.transaction, null);
     assert.equal(
       (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
-      1,
+      0,
     );
   });
 
-  it("concurrent complete saves -> one transaction", async () => {
+  it("concurrent complete saves -> both 200, no transaction", async () => {
     const user = await userA();
     const receipt = await makeReceipt(user.id, { categoryId: null });
     const body = {
@@ -341,10 +420,10 @@ describe("PUT /api/receipts/:id (save-and-confirm)", () => {
       api("PUT", `/api/receipts/${receipt.id}`, tokenA, body),
       api("PUT", `/api/receipts/${receipt.id}`, tokenA, body),
     ]);
-    assert.deepEqual([r1.status, r2.status].sort(), [200, 409]);
+    assert.deepEqual([r1.status, r2.status].sort(), [200, 200]);
     assert.equal(
       (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
-      1,
+      0,
     );
   });
 
@@ -362,6 +441,24 @@ describe("PUT /api/receipts/:id (save-and-confirm)", () => {
       (await db.transaction.findMany({ where: { receiptId: receipt.id } })).length,
       0,
     );
+  });
+
+  it("PUT on CONFIRMED receipt -> 409", async () => {
+    const user = await userA();
+    const receipt = await makeReceipt(user.id);
+    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, {
+      amount: 50000,
+      date: "2026-09-05",
+      merchant: "TEST MERCHANT",
+      type: "expense",
+      categoryId: expCatA,
+    });
+    assert.equal(confirmed.status, 201);
+    const res = await api("PUT", `/api/receipts/${receipt.id}`, tokenA, {
+      merchant: "LATE EDIT",
+    });
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error, "receipt already confirmed");
   });
 });
 
@@ -395,7 +492,13 @@ describe("GET /api/receipts/latest", () => {
   it("CONFIRMED rows are skipped", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
     const receipt = await makeReceipt(user.id);
-    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, {
+      amount: 50000,
+      date: "2026-09-05",
+      merchant: "TEST MERCHANT",
+      type: "expense",
+      categoryId: expCatA,
+    });
     assert.equal(confirmed.status, 201);
     const res = await api("GET", "/api/receipts/latest", tokenA);
     assert.equal(res.status, 200);
@@ -425,7 +528,13 @@ describe("DELETE /api/receipts/:id", () => {
   it("CONFIRMED receipt -> 409, transaction intact", async () => {
     const user = await db.user.findFirstOrThrow({ where: { email: `rcpt-a-${stamp}@example.invalid` } });
     const receipt = await makeReceipt(user.id);
-    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA);
+    const confirmed = await api("POST", `/api/receipts/${receipt.id}/confirm`, tokenA, {
+      amount: 50000,
+      date: "2026-09-05",
+      merchant: "TEST MERCHANT",
+      type: "expense",
+      categoryId: expCatA,
+    });
     assert.equal(confirmed.status, 201);
     const res = await api("DELETE", `/api/receipts/${receipt.id}`, tokenA);
     assert.equal(res.status, 409);

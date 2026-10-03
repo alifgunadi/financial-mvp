@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { useRegister } from "../api/hooks";
-
-export const authInputCls =
-  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+import { authInputCls } from "../shared/authStyles";
 
 export default function RegisterScreen({
   onRegistered,

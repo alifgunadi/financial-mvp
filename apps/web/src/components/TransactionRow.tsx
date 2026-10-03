@@ -1,6 +1,5 @@
 import type { Transaction } from "../api/hooks";
-
-export const fmtIDR = new Intl.NumberFormat("id-ID");
+import { fmtIDR } from "../shared/format";
 
 export default function TransactionRow({ t }: { t: Transaction }) {
   const income = t.type === "income";

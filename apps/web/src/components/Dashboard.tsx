@@ -5,13 +5,14 @@ import {
 } from "../api/hooks";
 import CategoryDonut from "./CategoryDonut.tsx";
 import CategoryManager from "./CategoryManager.tsx";
-import DashboardCard from "./DashboardCard.tsx";
+import DashboardCard from "../shared/ui/DashboardCard.tsx";
 import ReceiptUpload from "./ReceiptUpload.tsx";
 import SpendingPaceCard from "./SpendingPaceCard.tsx";
 import StatementImport from "./StatementImport.tsx";
 import TransactionForm from "./TransactionForm.tsx";
 import TransactionList from "./TransactionList.tsx";
-import TransactionRow, { fmtIDR } from "./TransactionRow.tsx";
+import TransactionRow from "./TransactionRow.tsx";
+import { fmtIDR } from "../shared/format";
 
 function currentMonth(): SummaryPeriod {
   const now = new Date();

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLogin } from "../api/hooks";
-import { authInputCls } from "./RegisterScreen.tsx";
+import { authInputCls } from "../shared/authStyles";
 
 export default function LoginScreen({
   initialEmail = "",

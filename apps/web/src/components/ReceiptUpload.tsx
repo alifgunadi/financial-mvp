@@ -4,9 +4,9 @@ import {
   useLatestReceipt,
   useUploadReceipt,
 } from "../api/hooks";
-import DashboardCard from "./DashboardCard.tsx";
+import DashboardCard from "../shared/ui/DashboardCard.tsx";
 import ReceiptReview from "./ReceiptReview.tsx";
-import { fmtIDR } from "./TransactionRow.tsx";
+import { fmtIDR } from "../shared/format";
 
 export default function ReceiptUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -119,7 +119,13 @@ export default function ReceiptUpload() {
             </button>
           </p>
         )}
-        {reviewId && (
+      </form>
+      {/* Sibling of the upload form, never nested inside it: nested
+          <form> is invalid HTML (the inner form is dropped by the parser),
+          which used to route "Save review" to the upload submit instead
+          of the review PUT. Same layout as StatementImport/ImportReview. */}
+      {reviewId && (
+        <div className="mt-3">
           <ReceiptReview
             key={reviewId}
             receiptId={reviewId}
@@ -128,9 +134,17 @@ export default function ReceiptUpload() {
               upload.reset();
               extract.reset();
             }}
+            // A CONFIRMED receipt must not stay pinned as the review
+            // target (same empty-state reset as delete): the dashboard
+            // and transaction lists already show the new Transaction.
+            onConfirmed={() => {
+              setCleared(true);
+              upload.reset();
+              extract.reset();
+            }}
           />
-        )}
-      </form>
+        </div>
+      )}
     </DashboardCard>
   );
 }

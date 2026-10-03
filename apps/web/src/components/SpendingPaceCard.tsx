@@ -1,6 +1,6 @@
 import type { SpendingPace } from "../api/hooks";
-import DashboardCard from "./DashboardCard.tsx";
-import { fmtIDR } from "./TransactionRow.tsx";
+import DashboardCard from "../shared/ui/DashboardCard.tsx";
+import { fmtIDR } from "../shared/format";
 
 const STATUS_META: Record<SpendingPace["status"], { label: string; dot: string }> = {
   on_track: { label: "On track", dot: "bg-leaf" },

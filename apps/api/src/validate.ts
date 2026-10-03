@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-// API uses lowercase types; mapped to Prisma enums in index.ts.
-export const categoryTypeSchema = z.enum(["income", "expense", "both"]);
+// API uses lowercase types; mapped to Prisma enums in routes.
+// categoryTypeSchema lives with its only consumer (features/categories).
 export const transactionTypeSchema = z.enum(["income", "expense"]);
 
 // YYYY-MM-DD calendar date (stored explicitly, no time component).
@@ -13,61 +13,18 @@ export const dateSchema = z
     return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
   }, "invalid calendar date");
 
-export const listCategoriesSchema = z.object({
-  type: categoryTypeSchema.optional(),
-});
-
-export const createCategorySchema = z.object({
-  name: z.string().trim().min(1, "name is required").max(100),
-  type: categoryTypeSchema,
-});
-
-// Amount = whole IDR units (50000 = Rp50.000), strictly positive. No floats.
-export const createTransactionSchema = z.object({
-  type: transactionTypeSchema,
-  amount: z
-    .number()
-    .int("amount must be an integer")
-    .positive("amount must be greater than 0")
-    .max(Number.MAX_SAFE_INTEGER),
-  date: dateSchema,
-  categoryId: z.string().uuid("categoryId must be a uuid"),
-  note: z.string().trim().max(500).optional(),
-  // Optional merchant label; receipt extraction will populate this later.
-  merchant: z.string().trim().max(200).optional(),
-});
-
-export const listTransactionsSchema = z.object({  type: transactionTypeSchema.optional(),
-  categoryId: z.string().uuid().optional(),
-  from: dateSchema.optional(),
-  to: dateSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
+// listCategoriesSchema + createCategorySchema live in
+// features/categories/schemas.ts; createTransactionSchema +
+// listTransactionsSchema live in features/transactions/schemas.ts.
+// summarySchema stays here: the dashboard target has no schemas.ts and
+// it is only consumed via the dashboard route below.
 export const summarySchema = z.object({
   from: dateSchema.optional(),
   to: dateSchema.optional(),
 });
 
-// Stage 4 review: partial edit of the AI candidate on a NEEDS_REVIEW
-// receipt. Every field optional+nullable (null clears it); at least one
-// key must be present. Same money/date rules as transaction creation.
-export const updateReceiptSchema = z
-  .object({
-    amount: z
-      .number()
-      .int("amount must be an integer")
-      .positive("amount must be greater than 0")
-      .max(Number.MAX_SAFE_INTEGER)
-      .nullable()
-      .optional(),
-    date: dateSchema.nullable().optional(),
-    merchant: z.string().trim().max(200).nullable().optional(),
-    type: transactionTypeSchema.nullable().optional(),
-    categoryId: z.string().uuid("categoryId must be a uuid").nullable().optional(),
-  })
-  .refine((o) => Object.keys(o).length > 0, "at least one review field is required");
+// updateReceiptSchema + confirmReceiptSchema (and their shared review
+// field rules) live in features/receipts/schemas.ts.
 
 // Statement import upload: explicit bank identifier only (never guessed).
 // Absent = unresolved, filled by a future detection phase. Multipart text
@@ -98,17 +55,5 @@ export const confirmImportSchema = z.object({
   ),
 });
 
-export const authSchema = z.object({  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .email("valid email is required")
-    .max(255),
-  password: z
-    .string()
-    .min(8, "password must be at least 8 characters")
-    .max(128),
-});
-
-export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
-export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
+// authSchema lives in features/auth/schemas.ts. CreateCategoryInput and
+// CreateTransactionInput moved with their schemas (same filenames).

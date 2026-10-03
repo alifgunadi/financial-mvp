@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { env } from "./env.js";
+import { env } from "./infra/env.js";
 
 // Gemini Vision extraction (plain fetch, no SDK).
 // Returns a CANDIDATE only. Never creates or mutates a Transaction.

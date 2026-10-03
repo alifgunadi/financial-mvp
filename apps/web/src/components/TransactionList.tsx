@@ -4,7 +4,7 @@ import {
   useTransactions,
   type TransactionFilter,
 } from "../api/hooks";
-import DashboardCard from "./DashboardCard.tsx";
+import DashboardCard from "../shared/ui/DashboardCard.tsx";
 import TransactionRow from "./TransactionRow.tsx";
 
 export default function TransactionList() {

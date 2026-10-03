@@ -4,7 +4,7 @@ import {
   useCreateCategory,
   type CategoryType,
 } from "../api/hooks";
-import DashboardCard from "./DashboardCard.tsx";
+import DashboardCard from "../shared/ui/DashboardCard.tsx";
 
 const inputCls =
   "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";

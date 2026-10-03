@@ -1,5 +1,5 @@
 import type { CategoryTotal } from "../api/hooks";
-import { fmtIDR } from "./TransactionRow.tsx";
+import { fmtIDR } from "../shared/format";
 
 // Restrained categorical set drawn from the product tokens only.
 const PALETTE = [
