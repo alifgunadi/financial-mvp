@@ -563,12 +563,16 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // Vercel entrypoint: default export agar zero-config detection menemukan
-// Express app ini (src/index.ts). app.listen di bawah hanya untuk local dev.
+// Express app ini (src/index.ts). app.listen di bawah hanya untuk local dev:
+// on Vercel the platform invokes the exported app, so binding a port there
+// is at best useless and at worst a fatal EADDRINUSE at cold start.
 export default app;
 
-app.listen(env.PORT, () => {
-  logInfo({ message: `api listening on http://localhost:${env.PORT}` });
-});
+if (!process.env.VERCEL) {
+  app.listen(env.PORT, () => {
+    logInfo({ message: `api listening on http://localhost:${env.PORT}` });
+  });
+}
 
 // Last-resort process safety: log structured, then exit (never limp on).
 process.on("unhandledRejection", (reason) => {
