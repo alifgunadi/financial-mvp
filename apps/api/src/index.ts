@@ -32,6 +32,7 @@ import { categoriesRoutes } from "./features/categories/routes.js";
 import { transactionsRoutes } from "./features/transactions/routes.js";
 import { dashboardRoutes } from "./features/dashboard/routes.js";
 import { receiptsRoutes } from "./features/receipts/routes.js";
+import { profileRoutes } from "./features/profile/routes.js";
 import {
   confirmImportSchema,
   createImportSchema,
@@ -67,7 +68,7 @@ function toApiImport(b: ImportBatchRow) {
   };
 }
 
-// Feature routers (auth, categories, transactions, dashboard, receipts).
+// Feature routers (auth, categories, transactions, dashboard, receipts, profile).
 // Mounted here in the same relative order the inline routes had;
 // statement imports stay inline below until their own migration tahap.
 app.use("/api/auth", authRoutes);
@@ -75,6 +76,7 @@ app.use("/api/categories", categoriesRoutes);
 app.use("/api/transactions", transactionsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/receipts", receiptsRoutes);
+app.use("/api/profile", profileRoutes);
 
 // ---------- statement imports (foundation: upload + identity only) ----------
 
