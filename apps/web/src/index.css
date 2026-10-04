@@ -40,3 +40,50 @@ body {
     scroll-behavior: auto;
   }
 }
+
+/* Sidebar email running text: applied only when JS detects overflow
+   (see MarqueeText). The track holds two copies and loops seamlessly;
+   duration is set inline from the measured width. */
+@keyframes user-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track.is-running {
+  animation-name: user-marquee;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track.is-running {
+    animation: none;
+  }
+}
+
+/* Dashboard date-range popover entrance: subtle fade-slide on mount. */
+@keyframes picker-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.picker-pop {
+  animation: picker-pop 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picker-pop {
+    animation: none;
+  }
+}

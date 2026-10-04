@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLogout, type AuthUser } from "../api/hooks";
 import UserAvatar from "./UserAvatar.tsx";
 
@@ -119,6 +119,65 @@ function LogoutButton({ compact = false }: { compact?: boolean }) {
   );
 }
 
+// Email running text: static truncate while it fits, seamless marquee
+// only while it overflows. Detection compares a hidden same-style
+// measurer against the visible container width (re-checked on text and
+// container resize). The animated track duplicates the text for a gapless
+// loop and stays inside overflow-hidden, so the sidebar never widens and
+// no page scrollbar appears. prefers-reduced-motion disables the
+// animation via CSS, leaving static text.
+function MarqueeText({ text, textCls }: { text: string; textCls: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [running, setRunning] = useState(false);
+  const [duration, setDuration] = useState(12);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    if (!container || !measure) return;
+    const check = () => {
+      const over = measure.scrollWidth > container.clientWidth + 1;
+      setRunning(over);
+      if (over)
+        setDuration(Math.min(24, Math.max(8, measure.scrollWidth / 40)));
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [text]);
+
+  return (
+    <div
+      ref={containerRef}
+      title={text}
+      aria-label={text}
+      className="relative min-w-0 flex-1 overflow-hidden"
+    >
+      <span
+        ref={measureRef}
+        aria-hidden="true"
+        className={`invisible absolute left-0 top-0 max-w-none whitespace-nowrap ${textCls}`}
+      >
+        {text}
+      </span>
+      {running ? (
+        <span
+          aria-hidden="true"
+          className="marquee-track is-running inline-flex w-max whitespace-nowrap"
+          style={{ animationDuration: `${duration}s` }}
+        >
+          <span className={`pr-10 ${textCls}`}>{text}</span>
+          <span className={`pr-10 ${textCls}`}>{text}</span>
+        </span>
+      ) : (
+        <span className={`block truncate ${textCls}`}>{text}</span>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({
   user,
   active,
@@ -160,10 +219,10 @@ export function Sidebar({
       </nav>
       <div className="border-t border-line pt-4">
         <div className="flex min-w-0 items-center gap-3 px-1">
-          <UserAvatar email={user.email} sizeCls="h-9 w-9" />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{user.email}</p>
-            <p className="text-xs capitalize text-subtle">{user.role.toLowerCase()}</p>
+          <UserAvatar username={user.username} sizeCls="h-9 w-9" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">@{user.username}</p>
+            <MarqueeText text={user.email} textCls="text-xs text-subtle" />
           </div>
         </div>
         <div className="mt-2">
@@ -194,8 +253,8 @@ export function MobileBar({
           Financial&nbsp;MVP
         </a>
         <div className="flex min-w-0 items-center gap-2">
-          <UserAvatar email={user.email} sizeCls="h-8 w-8" />
-          <span className="truncate text-xs text-subtle">{user.email}</span>
+          <UserAvatar username={user.username} sizeCls="h-8 w-8" />
+          <MarqueeText text={user.email} textCls="text-xs text-subtle" />
           <LogoutButton compact />
         </div>
       </div>

@@ -5,10 +5,10 @@ import { useAvatarUrl, useProfile } from "../api/hooks";
 // without props drilling from App (which only has AuthUser from /me,
 // and /me carries no avatar fields by design). No new query keys.
 export default function UserAvatar({
-  email,
+  username,
   sizeCls,
 }: {
-  email: string;
+  username: string;
   sizeCls: string;
 }) {
   const profile = useProfile();
@@ -33,7 +33,7 @@ export default function UserAvatar({
       aria-hidden="true"
       className={`${sizeCls} flex shrink-0 items-center justify-center rounded-full bg-sand ${textCls} font-bold text-ink`}
     >
-      {email.slice(0, 1).toUpperCase()}
+      {username.slice(0, 1).toUpperCase()}
     </span>
   );
 }

@@ -5,6 +5,7 @@ import {
 } from "../api/hooks";
 import CategoryDonut from "./CategoryDonut.tsx";
 import DashboardCard from "../shared/ui/DashboardCard.tsx";
+import DateRangePicker from "./DateRangePicker.tsx";
 import SpendingPaceCard from "./SpendingPaceCard.tsx";
 import TransactionRow from "./TransactionRow.tsx";
 import { fmtIDR } from "../shared/format";
@@ -16,9 +17,6 @@ function currentMonth(): SummaryPeriod {
   const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
   return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
 }
-
-const dateInputCls =
-  "rounded-xl border border-line bg-surface px-2.5 py-2 text-[13px] text-ink focus:border-ink focus:outline-none";
 
 function SummaryCard({
   label,
@@ -101,19 +99,10 @@ export default function Dashboard({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
-            aria-label="From"
-            className={dateInputCls}
-            value={period.from}
-            onChange={(e) => setPeriod((p) => ({ ...p, from: e.target.value }))}
-          />
-          <input
-            type="date"
-            aria-label="To"
-            className={dateInputCls}
-            value={period.to}
-            onChange={(e) => setPeriod((p) => ({ ...p, to: e.target.value }))}
+          <DateRangePicker
+            from={period.from}
+            to={period.to}
+            onChange={(from, to) => setPeriod({ from, to })}
           />
           <button
             type="button"

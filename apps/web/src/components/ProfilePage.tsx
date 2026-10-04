@@ -3,6 +3,7 @@ import { ApiError } from "../api/client";
 import {
   useChangePassword,
   useDeleteAvatar,
+  useMe,
   useProfile,
   useUpdateProfile,
   useUploadAvatar,
@@ -33,6 +34,9 @@ const secondaryBtnCls =
 
 export default function ProfilePage() {
   const profile = useProfile();
+  // Username for the avatar initial comes from auth state (AuthUser);
+  // /api/profile carries no username by design.
+  const me = useMe();
   const updateProfile = useUpdateProfile();
   const changePassword = useChangePassword();
   const uploadAvatar = useUploadAvatar();
@@ -336,7 +340,7 @@ export default function ProfilePage() {
           ) : (
             <div>
               <div className="flex items-center gap-4">
-                <UserAvatar email={p.email} sizeCls="h-16 w-16" />
+                <UserAvatar username={me.data?.username ?? ""} sizeCls="h-16 w-16" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{p.name ?? p.email}</p>
                   <p className="text-xs text-subtle">
