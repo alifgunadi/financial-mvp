@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useLogout, type AuthUser } from "../api/hooks";
+import UserAvatar from "./UserAvatar.tsx";
 
 export interface NavItem {
   id: string;
@@ -78,6 +79,16 @@ export const NAV_ITEMS: NavItem[] = [
     label: "History",
     icon: (cls) => <Icon cls={cls} d="M4 6h16M4 12h16M4 18h10" />,
   },
+  {
+    id: "profile",
+    label: "Profile",
+    icon: (cls) => (
+      <Icon
+        cls={cls}
+        d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.5-6 8-6s8 2 8 6"
+      />
+    ),
+  },
 ];
 
 function LogoutButton({ compact = false }: { compact?: boolean }) {
@@ -149,12 +160,7 @@ export function Sidebar({
       </nav>
       <div className="border-t border-line pt-4">
         <div className="flex min-w-0 items-center gap-3 px-1">
-          <span
-            aria-hidden="true"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sand text-sm font-bold text-ink"
-          >
-            {user.email.slice(0, 1).toUpperCase()}
-          </span>
+          <UserAvatar email={user.email} sizeCls="h-9 w-9" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{user.email}</p>
             <p className="text-xs capitalize text-subtle">{user.role.toLowerCase()}</p>
@@ -188,6 +194,7 @@ export function MobileBar({
           Financial&nbsp;MVP
         </a>
         <div className="flex min-w-0 items-center gap-2">
+          <UserAvatar email={user.email} sizeCls="h-8 w-8" />
           <span className="truncate text-xs text-subtle">{user.email}</span>
           <LogoutButton compact />
         </div>

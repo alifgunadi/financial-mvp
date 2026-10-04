@@ -93,3 +93,23 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
     );
   return body as T;
 }
+
+// Blob variant for binary downloads (e.g. the profile avatar): GET with
+// the Authorization header and no JSON content-type. An <img> tag cannot
+// send that header, so callers fetch the blob here and render it via
+// URL.createObjectURL(). Errors follow the same { error } convention.
+export async function apiBlob(path: string): Promise<Blob> {
+  const epoch = authEpoch;
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(
+      body.error ?? `Request failed (${res.status})`,
+      res.status,
+      epoch,
+    );
+  }
+  return res.blob();
+}

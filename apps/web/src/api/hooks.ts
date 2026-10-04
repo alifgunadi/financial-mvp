@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -8,6 +9,7 @@ import {
 import {
   ApiError,
   api,
+  apiBlob,
   apiUpload,
   getAuthEpoch,
   hasSessionToken,
@@ -570,6 +572,121 @@ export function useConfirmImport(id: string | null) {
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       if (id) qc.invalidateQueries({ queryKey: ["imports", id, "preview"] });
+    },
+  });
+}
+
+// ---------- my profile (separate from AuthUser / /api/auth/*) ----------
+
+// GET /api/profile shape. Kept apart from AuthUser on purpose: useMe and
+// /api/auth/me stay untouched, profile state lives under ["profile"].
+export interface Profile {
+  id: string;
+  email: string;
+  name: string | null;
+  role: "CLIENT" | "SUPERADMIN";
+  hasAvatar: boolean;
+  avatarMime: string | null;
+  avatarUpdatedAt: string | null;
+}
+
+export function useProfile() {
+  return useQuery({
+    queryKey: ["profile"],
+    queryFn: () => api<Profile>("/api/profile"),
+    retry: false,
+  });
+}
+
+export function useUpdateProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string | null }) =>
+      api<Profile>("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["profile"], data);
+    },
+  });
+}
+
+export function useChangePassword() {
+  // Note: a wrong current password is a 400 from the backend (never 401),
+  // so the global 401 handler in main.tsx/hooks.ts ignores it and no
+  // logout is triggered. Only a truly expired session (401) resets auth.
+  return useMutation({
+    mutationFn: (input: { currentPassword: string; newPassword: string }) =>
+      api<{ ok: true }>("/api/profile/password", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+  });
+}
+
+// Avatar image as an object URL. The <img> tag cannot send the
+// Authorization header, so the bytes are fetched with apiBlob and rendered
+// via URL.createObjectURL(). avatarUpdatedAt busts the stale-URL case where
+// hasAvatar stays true across a replace (upload over an existing avatar).
+export function useAvatarUrl(
+  hasAvatar: boolean,
+  avatarUpdatedAt: string | null = null,
+): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hasAvatar) {
+      setUrl(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    apiBlob("/api/profile/avatar")
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [hasAvatar, avatarUpdatedAt]);
+  return url;
+}
+
+export interface UploadedAvatar {
+  mimeType: string;
+  size: number;
+  updatedAt: string | null;
+}
+
+export function useUploadAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return apiUpload<UploadedAvatar>("/api/profile/avatar", form);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["profile", "avatar"] });
+    },
+  });
+}
+
+export function useDeleteAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: true }>("/api/profile/avatar", { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["profile", "avatar"] });
     },
   });
 }

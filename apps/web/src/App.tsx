@@ -6,6 +6,7 @@ import Dashboard from "./components/Dashboard.tsx";
 import HistoryPage from "./components/HistoryPage.tsx";
 import ImportsPage from "./components/ImportsPage.tsx";
 import NewTransactionPage from "./components/NewTransactionPage.tsx";
+import ProfilePage from "./components/ProfilePage.tsx";
 import ReceiptsPage from "./components/ReceiptsPage.tsx";
 import { MobileBar, Sidebar } from "./components/Sidebar.tsx";
 
@@ -39,6 +40,8 @@ export default function App() {
             <ReceiptsPage />
           ) : active === "imports" ? (
             <ImportsPage />
+          ) : active === "profile" ? (
+            <ProfilePage />
           ) : (
             <Dashboard onNavigate={setActive} />
           )}
