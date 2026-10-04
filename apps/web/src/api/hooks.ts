@@ -19,6 +19,7 @@ import {
 export interface AuthUser {
   id: string;
   email: string;
+  username: string;
   role: "CLIENT" | "SUPERADMIN";
 }
 
@@ -93,13 +94,24 @@ export function handleQueryError(
   handleAuthError(qc, error);
 }
 
+// Register response: AuthUser plus the required display name. Username is
+// immutable after this point; the login handoff uses it as the identifier.
+export interface RegisterResponse extends AuthUser {
+  name: string;
+}
+
 export function useRegister() {
   return useMutation({
-    // Registration creates no session: the response is AuthUser only
-    // (no sessionToken). Callers handle success per call; nothing here
+    // Registration creates no session: the response carries no
+    // sessionToken. Callers handle success per call; nothing here
     // touches the token, the epoch, or ["me"], so no /me request follows.
-    mutationFn: (input: { email: string; password: string }) =>
-      api<AuthUser>("/api/auth/register", {
+    mutationFn: (input: {
+      email: string;
+      username: string;
+      name: string;
+      password: string;
+    }) =>
+      api<RegisterResponse>("/api/auth/register", {
         method: "POST",
         body: JSON.stringify(input),
       }),
@@ -109,7 +121,8 @@ export function useRegister() {
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { email: string; password: string }) =>
+    // Single identifier: email or username. The frontend never sends both.
+    mutationFn: (input: { identifier: string; password: string }) =>
       api<AuthSession>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(input),

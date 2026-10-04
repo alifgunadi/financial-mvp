@@ -84,14 +84,27 @@ let expCatA = "";
 let incCatA = "";
 let expCatB = "";
 
+function testUsername(tag: string): string {
+  const clean = tag.replace(/[^a-z0-9_]/g, "_").toLowerCase();
+  return `${clean.slice(0, 6)}_${stamp}`;
+}
+
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const email = `rcpt-${tag}-${stamp}@example.invalid`;
   const password = `Test1234-${tag}-${stamp}`;
   const created = await db.user.create({
-    data: { email, passwordHash: await hashPassword(password), role: "CLIENT" },
+    data: {
+      email,
+      username: testUsername(tag),
+      passwordHash: await hashPassword(password),
+      role: "CLIENT",
+    },
   });
   testUserIds.push(created.id);
-  const login = await api("POST", "/api/auth/login", undefined, { email, password });
+  const login = await api("POST", "/api/auth/login", undefined, {
+    identifier: email,
+    password,
+  });
   assert.equal(login.status, 200);
   return { id: created.id, token: login.json.sessionToken as string };
 }

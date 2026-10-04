@@ -3,20 +3,20 @@ import { useLogin } from "../api/hooks";
 import { authInputCls } from "../shared/authStyles";
 
 export default function LoginScreen({
-  initialEmail = "",
+  initialIdentifier = "",
   onRegister,
 }: {
-  initialEmail?: string;
+  initialIdentifier?: string;
   onRegister: () => void;
 }) {
-  const [email, setEmail] = useState(initialEmail);
+  const [identifier, setIdentifier] = useState(initialIdentifier);
   const [password, setPassword] = useState("");
   const login = useLogin();
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password) return;
-    login.mutate({ email: email.trim(), password });
+    if (!identifier.trim() || !password) return;
+    login.mutate({ identifier: identifier.trim(), password });
   };
 
   const switchMode = () => {
@@ -30,12 +30,12 @@ export default function LoginScreen({
       <form onSubmit={submit} className="mt-3 space-y-3">
         <input
           className={authInputCls}
-          type="email"
-          aria-label="Email"
-          placeholder="Email"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text"
+          aria-label="Email or username"
+          placeholder="Email or username"
+          autoComplete="username"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
         />
         <input
           className={authInputCls}

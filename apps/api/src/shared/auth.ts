@@ -15,6 +15,7 @@ export type UserRole = "CLIENT" | "SUPERADMIN";
 export interface AuthUser {
   id: string;
   email: string;
+  username: string;
   role: UserRole;
 }
 
@@ -116,6 +117,7 @@ export async function requireAuth(
   req.user = {
     id: session.user.id,
     email: session.user.email,
+    username: session.user.username,
     role: session.user.role as UserRole,
   };
   next();

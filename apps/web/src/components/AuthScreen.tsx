@@ -7,9 +7,9 @@ import RegisterScreen from "./RegisterScreen.tsx";
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<"login" | "register">("login");
-  // Set only right after a successful registration; carries the new email
-  // to the login form exactly once (manual mode switches clear it).
-  const [successEmail, setSuccessEmail] = useState<string | null>(null);
+  // Set only right after a successful registration; carries the new
+  // username to the login form exactly once (manual mode switches clear it).
+  const [successIdentifier, setSuccessIdentifier] = useState<string | null>(null);
   const me = useMe();
   const qc = useQueryClient();
   const meError = me.isError ? me.error : null;
@@ -23,18 +23,18 @@ export default function AuthScreen() {
   // registration notice while typing or on resubmit.
   const clearNotices = () => {
     if (me.isError) qc.setQueryData(["me"], null);
-    setSuccessEmail(null);
+    setSuccessIdentifier(null);
   };
   const toRegister = () => {
-    setSuccessEmail(null);
+    setSuccessIdentifier(null);
     setMode("register");
   };
   const toLogin = () => {
-    setSuccessEmail(null);
+    setSuccessIdentifier(null);
     setMode("login");
   };
-  const handleRegistered = (email: string) => {
-    setSuccessEmail(email);
+  const handleRegistered = (identifier: string) => {
+    setSuccessIdentifier(identifier);
     setMode("login");
   };
 
@@ -42,7 +42,7 @@ export default function AuthScreen() {
     <main className="mx-auto max-w-sm p-4 sm:p-6">
       <h1 className="text-xl font-semibold">Financial MVP</h1>
       {notice && <p className="mt-3 text-sm text-clay-ink">{notice}</p>}
-      {mode === "login" && successEmail !== null && (
+      {mode === "login" && successIdentifier !== null && (
         <p className="mt-3 text-sm text-green-700">
           Account created. Please login.
         </p>
@@ -50,7 +50,7 @@ export default function AuthScreen() {
       <div className="mt-4" onChange={clearNotices} onSubmit={clearNotices}>
         {mode === "login" ? (
           <LoginScreen
-            initialEmail={successEmail ?? ""}
+            initialIdentifier={successIdentifier ?? ""}
             onRegister={toRegister}
           />
         ) : (

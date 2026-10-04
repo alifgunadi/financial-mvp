@@ -6,10 +6,12 @@ export default function RegisterScreen({
   onRegistered,
   onLogin,
 }: {
-  onRegistered: (email: string) => void;
+  onRegistered: (identifier: string) => void;
   onLogin: () => void;
 }) {
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const register = useRegister();
@@ -21,12 +23,19 @@ export default function RegisterScreen({
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password || mismatch) return;
-    // Success hands the (server-normalized) email up; AuthScreen switches
-    // to login. Only the email crosses over, never the password.
+    if (!email.trim() || !username.trim() || !name.trim() || !password || mismatch)
+      return;
+    // Success hands the (server-normalized) username up as the login
+    // identifier; AuthScreen switches to login. Only the identifier
+    // crosses over, never the password.
     register.mutate(
-      { email: email.trim(), password },
-      { onSuccess: (user) => onRegistered(user.email) },
+      {
+        email: email.trim(),
+        username: username.trim(),
+        name: name.trim(),
+        password,
+      },
+      { onSuccess: (user) => onRegistered(user.username) },
     );
   };
 
@@ -47,6 +56,24 @@ export default function RegisterScreen({
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          className={authInputCls}
+          type="text"
+          aria-label="Username"
+          placeholder="Username (a-z, 0-9, _, 3-20)"
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <input
+          className={authInputCls}
+          type="text"
+          aria-label="Name"
+          placeholder="Name"
+          autoComplete="name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
         />
         <input
           className={authInputCls}
