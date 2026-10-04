@@ -20,7 +20,7 @@ export default function TransactionList() {
       title={`History${data ? ` (${data.total})` : ""}`}
       subtitle="All recorded transactions"
       actionHeader={
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           <select
             aria-label="Filter by type"
             className="rounded-lg border border-line bg-surface px-2 py-1.5 text-[13px]"

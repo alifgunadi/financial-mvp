@@ -42,19 +42,26 @@ export default function SpendingPaceCard({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="min-w-0">
           <p className="text-xs text-white/60">Recommended today</p>
-          <p className="mt-1 truncate text-[22px] font-bold tracking-tight">
+          <p
+            title={`Rp${fmtIDR.format(pace.recommendedMaxPerDay)}`}
+            className="mt-1 truncate text-[22px] font-bold tracking-tight"
+          >
             Rp{fmtIDR.format(pace.recommendedMaxPerDay)}
           </p>
         </div>
         <div className="min-w-0">
           <p className="text-xs text-white/60">Spent today</p>
-          <p className="mt-1 truncate text-[22px] font-bold tracking-tight">
+          <p
+            title={`Rp${fmtIDR.format(pace.spentToday)}`}
+            className="mt-1 truncate text-[22px] font-bold tracking-tight"
+          >
             Rp{fmtIDR.format(pace.spentToday)}
           </p>
         </div>
         <div className="min-w-0">
           <p className="text-xs text-white/60">Remaining today</p>
           <p
+            title={`Rp${fmtIDR.format(pace.remainingToday)}`}
             className={`mt-1 truncate text-[22px] font-bold tracking-tight ${pace.remainingToday < 0 ? "text-red-300" : ""}`}
           >
             Rp{fmtIDR.format(pace.remainingToday)}

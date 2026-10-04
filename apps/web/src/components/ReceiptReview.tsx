@@ -10,7 +10,7 @@ import {
 import { fmtIDR } from "../shared/format";
 
 const inputCls =
-  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-ink focus:outline-none";
 const aiCls = "text-xs text-gray-500";
 
 function aiAmount(v: number | null | undefined): string {
@@ -222,7 +222,7 @@ function ReviewForm({
           >
             Save review
           </button>
-          {localError && <p className="text-sm text-red-600">{localError}</p>}
+          {localError && <p className="text-sm text-clay-ink">{localError}</p>}
         </>
       ) : (
         <div className="space-y-1 rounded bg-gray-50 p-3 text-sm">
@@ -259,7 +259,7 @@ function ReviewForm({
             </button>
           </div>
           {confirm.isError && (
-            <p className="text-sm text-red-600">
+            <p className="text-sm text-clay-ink">
               {(confirm.error as Error).message}
             </p>
           )}
@@ -302,7 +302,7 @@ export default function ReceiptReview({
 
       {isPending && <p className="mt-2 text-sm text-gray-500">Loading…</p>}
       {isError && (
-        <p className="mt-2 text-sm text-red-600">
+        <p className="mt-2 text-sm text-clay-ink">
           {(error as Error).message}{" "}
           <button className="underline" onClick={() => refetch()}>
             Retry
@@ -359,7 +359,7 @@ export default function ReceiptReview({
             </div>
           )}
           {remove.isError && (
-            <p className="mt-2 text-sm text-red-600">
+            <p className="mt-2 text-sm text-clay-ink">
               {(remove.error as Error).message}
             </p>
           )}

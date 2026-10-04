@@ -54,7 +54,7 @@ export default function LoginScreen({
           {login.isPending ? "Please wait…" : "Login"}
         </button>
         {login.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(login.error as Error).message}
           </p>
         )}

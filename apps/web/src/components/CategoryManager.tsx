@@ -7,7 +7,7 @@ import {
 import DashboardCard from "../shared/ui/DashboardCard.tsx";
 
 const inputCls =
-  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-ink focus:outline-none";
 
 export default function CategoryManager() {
   const { data, isPending, isError, error, refetch } = useCategories();
@@ -51,7 +51,7 @@ export default function CategoryManager() {
         </ul>
       )}
 
-      <form onSubmit={submit} className="mt-3 flex gap-2">
+      <form onSubmit={submit} className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
           className={inputCls}
           placeholder="New category"

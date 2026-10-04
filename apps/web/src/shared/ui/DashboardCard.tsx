@@ -20,7 +20,7 @@ export default function DashboardCard({
   const dark = tone === "dark";
   return (
     <div
-      className={`flex h-full min-w-0 flex-col justify-between rounded-2xl border border-line p-6 shadow-sm transition-all ${
+      className={`flex h-full min-w-0 flex-col justify-between rounded-2xl border border-line p-6 shadow-sm transition-colors ${
         dark ? "bg-ink text-white" : "bg-surface text-ink"
       }`}
     >

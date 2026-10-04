@@ -7,7 +7,7 @@ import {
 import DashboardCard from "../shared/ui/DashboardCard.tsx";
 
 const inputCls =
-  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-ink focus:outline-none";
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function TransactionForm() {
@@ -85,7 +85,7 @@ export default function TransactionForm() {
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             className={inputCls}
             type="date"
@@ -128,7 +128,7 @@ export default function TransactionForm() {
           {create.isPending ? "Saving…" : "Save transaction"}
         </button>
         {create.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(create.error as Error).message}
           </p>
         )}

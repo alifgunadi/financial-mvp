@@ -67,7 +67,7 @@ export default function RegisterScreen({
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
-        {mismatch && <p className="text-sm text-red-600">{mismatch}</p>}
+        {mismatch && <p className="text-sm text-clay-ink">{mismatch}</p>}
         <button
           type="submit"
           disabled={register.isPending || !!mismatch}
@@ -76,7 +76,7 @@ export default function RegisterScreen({
           {register.isPending ? "Creating account…" : "Register"}
         </button>
         {register.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(register.error as Error).message}
           </p>
         )}

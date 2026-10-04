@@ -4,13 +4,8 @@ import {
   type SummaryPeriod,
 } from "../api/hooks";
 import CategoryDonut from "./CategoryDonut.tsx";
-import CategoryManager from "./CategoryManager.tsx";
 import DashboardCard from "../shared/ui/DashboardCard.tsx";
-import ReceiptUpload from "./ReceiptUpload.tsx";
 import SpendingPaceCard from "./SpendingPaceCard.tsx";
-import StatementImport from "./StatementImport.tsx";
-import TransactionForm from "./TransactionForm.tsx";
-import TransactionList from "./TransactionList.tsx";
 import TransactionRow from "./TransactionRow.tsx";
 import { fmtIDR } from "../shared/format";
 
@@ -40,6 +35,7 @@ function SummaryCard({
     <div className="h-full min-w-0 rounded-2xl border border-line bg-surface p-6 shadow-sm">
       <p className="text-sm font-semibold tracking-tight">{label}</p>
       <p
+        title={`Rp${fmtIDR.format(value)}`}
         className={`mt-1.5 truncate text-[26px] font-bold tracking-tight tabular-nums ${tone}`}
       >
         Rp{fmtIDR.format(value)}
@@ -80,7 +76,11 @@ function FlowBar({
 
 type RecentTab = "" | "income" | "expense";
 
-export default function Dashboard() {
+export default function Dashboard({
+  onNavigate,
+}: {
+  onNavigate?: (id: string) => void;
+}) {
   const [period, setPeriod] = useState<SummaryPeriod>(currentMonth);
   const [tab, setTab] = useState<RecentTab>("");
   const { data, isPending, isError, error, refetch } =
@@ -122,12 +122,13 @@ export default function Dashboard() {
           >
             This month
           </button>
-          <a
-            href="#new-transaction"
+          <button
+            type="button"
+            onClick={() => onNavigate?.("new-transaction")}
             className="rounded-xl bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90"
           >
             + New transaction
-          </a>
+          </button>
         </div>
       </div>
 
@@ -282,30 +283,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Statement import — full width so candidate review stays readable */}
-      <div id="imports" className="mt-6 scroll-mt-24">
-        <StatementImport
-          onViewPeriod={(from, to) => setPeriod({ from, to })}
-        />
-      </div>
-
-      {/* Row 5: operations — history log + action sidebar */}
-      <div className="mt-6 grid grid-cols-12 items-start gap-6 [&>*]:min-w-0">
-        <div id="history" className="col-span-12 scroll-mt-24 lg:col-span-8">
-          <TransactionList />
-        </div>
-        <div className="col-span-12 space-y-6 lg:col-span-4">
-          <div id="new-transaction" className="scroll-mt-24">
-            <TransactionForm />
-          </div>
-          <div id="categories" className="scroll-mt-24">
-            <CategoryManager />
-          </div>
-          <div id="receipts" className="scroll-mt-24">
-            <ReceiptUpload />
-          </div>
-        </div>
-      </div>
     </section>
   );
 }

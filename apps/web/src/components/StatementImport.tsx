@@ -11,7 +11,7 @@ import DashboardCard from "../shared/ui/DashboardCard.tsx";
 import { fmtIDR } from "../shared/format";
 
 const inputCls =
-  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+  "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-ink focus:outline-none";
 
 // Backend disposition is the lowercase CandidateDisposition
 // (see bluSemantic.ts + toApi in the preview handler).
@@ -294,7 +294,7 @@ function ImportReview({
                   {confirm.isPending ? "Confirming…" : "Confirm import"}
                 </button>
                 {confirm.isError && (
-                  <p className="text-sm text-red-600">
+                  <p className="text-sm text-clay-ink">
                     {(confirm.error as Error).message}{" "}
                     {confirm.error instanceof ApiError &&
                       confirm.error.status === 409 && (
@@ -393,7 +393,7 @@ export default function StatementImport({
           {upload.isPending ? "Uploading…" : "Upload"}
         </button>
         {upload.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(upload.error as Error).message}
           </p>
         )}

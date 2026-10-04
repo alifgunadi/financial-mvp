@@ -41,9 +41,9 @@ export default function AuthScreen() {
   return (
     <main className="mx-auto max-w-sm p-4 sm:p-6">
       <h1 className="text-xl font-semibold">Financial MVP</h1>
-      {notice && <p className="mt-3 text-sm text-red-600">{notice}</p>}
+      {notice && <p className="mt-3 text-sm text-clay-ink">{notice}</p>}
       {mode === "login" && successEmail !== null && (
-        <p className="mt-3 text-sm text-green-600">
+        <p className="mt-3 text-sm text-green-700">
           Account created. Please login.
         </p>
       )}

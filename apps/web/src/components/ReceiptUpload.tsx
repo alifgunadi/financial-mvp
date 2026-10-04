@@ -59,7 +59,7 @@ export default function ReceiptUpload() {
           {upload.isPending ? "Uploading…" : "Upload"}
         </button>
         {upload.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(upload.error as Error).message}
           </p>
         )}
@@ -79,7 +79,7 @@ export default function ReceiptUpload() {
           </button>
         )}
         {extract.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(extract.error as Error).message}
           </p>
         )}
@@ -112,7 +112,7 @@ export default function ReceiptUpload() {
           </dl>
         )}
         {latest.isError && (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-clay-ink">
             {(latest.error as Error).message}{" "}
             <button className="underline" onClick={() => latest.refetch()}>
               Retry

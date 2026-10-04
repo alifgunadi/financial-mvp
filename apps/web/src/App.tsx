@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { useMe } from "./api/hooks";
 import AuthScreen from "./components/AuthScreen.tsx";
+import CategoriesPage from "./components/CategoriesPage.tsx";
 import Dashboard from "./components/Dashboard.tsx";
+import HistoryPage from "./components/HistoryPage.tsx";
+import ImportsPage from "./components/ImportsPage.tsx";
+import NewTransactionPage from "./components/NewTransactionPage.tsx";
+import ReceiptsPage from "./components/ReceiptsPage.tsx";
 import { MobileBar, Sidebar } from "./components/Sidebar.tsx";
 
 export default function App() {
@@ -24,7 +29,19 @@ export default function App() {
       <div className="min-w-0 flex-1">
         <MobileBar user={me.data} active={active} onNav={setActive} />
         <main className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
-          <Dashboard />
+          {active === "categories" ? (
+            <CategoriesPage />
+          ) : active === "new-transaction" ? (
+            <NewTransactionPage />
+          ) : active === "history" ? (
+            <HistoryPage />
+          ) : active === "receipts" ? (
+            <ReceiptsPage />
+          ) : active === "imports" ? (
+            <ImportsPage />
+          ) : (
+            <Dashboard onNavigate={setActive} />
+          )}
         </main>
       </div>
     </div>
